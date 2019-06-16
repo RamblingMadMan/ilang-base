@@ -9,20 +9,19 @@
 
 using namespace ilang;
 
-using TokenIter = gsl::span<const Token>::const_iterator;
 using DelimPred = std::function<bool(const Token&)>;
 
 struct ParsedExpr{
 	std::unique_ptr<Expr> expr;
-	TokenIter it;
+	TokenIterator it;
 };
 
 template<typename T>
-ParsedExpr parse_result(std::unique_ptr<T> &ptr, TokenIter it){
+ParsedExpr parse_result(std::unique_ptr<T> &ptr, TokenIterator it){
 	return {std::move(ptr), it};
 }
 
-ParsedExpr parseExpr(TypeData &typeData, Ast &ast, TokenIter it, TokenIter end, DelimPred isDelim);
+ParsedExpr parseExpr(TypeData &typeData, Ast &ast, TokenIterator it, TokenIterator end, DelimPred isDelim);
 
 auto storeExpr(Ast &ast, std::unique_ptr<Expr> ptr){
 	return ast.storage.emplace_back(std::move(ptr)).get();
@@ -114,7 +113,7 @@ std::unique_ptr<Exprs::BinOp> sortBinop(TypeData &typeData, Ast &ast, std::uniqu
 
 ParsedExpr parseBinaryOp(
 	TypeData &typeData, Ast &ast, std::unique_ptr<Expr> lhs, std::string op,
-	TokenIter it, TokenIter end, DelimPred isDelim
+	TokenIterator it, TokenIterator end, DelimPred isDelim
 ){
 	auto storePtr = [&ast](auto &ptr){
 		return storeExpr(ast, std::move(ptr));
@@ -140,7 +139,7 @@ ParsedExpr parseBinaryOp(
 
 ParsedExpr parseLeadingValue(
 	TypeData &typeData, Ast &ast, std::unique_ptr<Expr> value,
-	TokenIter it, TokenIter end, DelimPred isDelim
+	TokenIterator it, TokenIterator end, DelimPred isDelim
 ){
 	if(it == end || isDelim(*it))
 		return parse_result(value, it);
@@ -168,31 +167,31 @@ ParsedExpr parseLeadingValue(
 
 ParsedExpr parseLiteralInner(
 	TypeData &typeData, Ast &ast, std::unique_ptr<Expr> lit,
-	TokenIter it, TokenIter end, DelimPred isDelim
+	TokenIterator it, TokenIterator end, DelimPred isDelim
 ){
 	if(it == end || isDelim(*it)) return parse_result(lit, it);
 	return parseLeadingValue(typeData, ast, std::move(lit), it, end, std::move(isDelim));
 }
 
-ParsedExpr parseIntLiteral(TypeData &typeData, Ast &ast, std::string lit, TokenIter it, TokenIter end, DelimPred isDelim){
+ParsedExpr parseIntLiteral(TypeData &typeData, Ast &ast, std::string lit, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	auto intLit = std::make_unique<Exprs::IntLiteral>(std::move(lit));
 	intLit->intType = refType(typeData, ast, findIntegerType(typeData));
 	return parseLiteralInner(typeData, ast, std::move(intLit), it, end, std::move(isDelim));
 }
 
-ParsedExpr parseRealLiteral(TypeData &typeData, Ast &ast, std::string lit, TokenIter it, TokenIter end, DelimPred isDelim){
+ParsedExpr parseRealLiteral(TypeData &typeData, Ast &ast, std::string lit, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	auto realLit = std::make_unique<Exprs::RealLiteral>(std::move(lit));
 	realLit->realType = refType(typeData, ast, findRealType(typeData));
 	return parseLiteralInner(typeData, ast, std::move(realLit), it, end, std::move(isDelim));
 }
 
-ParsedExpr parseStrLiteral(TypeData &typeData, Ast &ast, std::string lit, TokenIter it, TokenIter end, DelimPred isDelim){
+ParsedExpr parseStrLiteral(TypeData &typeData, Ast &ast, std::string lit, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	auto strLit = std::make_unique<Exprs::StringLiteral>(std::move(lit));
 	strLit->strType = refType(typeData, ast, findStringType(typeData));
 	return parseLiteralInner(typeData, ast, std::move(strLit), it, end, std::move(isDelim));
 }
 
-ParsedExpr parseListLiteral(TypeData &typeData, Ast &ast, TokenIter it, TokenIter end, DelimPred isDelim){
+ParsedExpr parseListLiteral(TypeData &typeData, Ast &ast, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	if(it == end || isDelim(*it)) throw ParseError("Unexpected end of list literal");
 	
 	while(it != end && it->type == TokenType::space)
@@ -253,7 +252,7 @@ ParsedExpr parseListLiteral(TypeData &typeData, Ast &ast, TokenIter it, TokenIte
 	return parseLeadingValue(typeData, ast, std::move(result), it, end, std::move(isDelim));
 }
 
-ParsedExpr parseGroupLiteral(TypeData &typeData, Ast &ast, TokenIter it, TokenIter end, DelimPred isDelim){
+ParsedExpr parseGroupLiteral(TypeData &typeData, Ast &ast, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	if(it == end || isDelim(*it)) throw ParseError("Unexpected end of group literal");
 	
 	while(it != end && it->type == TokenType::space)
@@ -363,7 +362,7 @@ std::vector<std::unique_ptr<Exprs::ParamDecl>> makeParams(TypeData &typeData, st
 ParsedExpr parseFnDecl(
 	TypeData &typeData, Ast &ast,
 	std::string id, std::unique_ptr<Exprs::ProductLiteral> paramsGroup,
-	TokenIter it, TokenIter end,
+	TokenIterator it, TokenIterator end,
 	DelimPred isDelim
 ){	
 	while(it != end && it->type == TokenType::space)
@@ -374,7 +373,7 @@ ParsedExpr parseFnDecl(
 	throw ParseError("Function declarations currently unimplemented");
 }
 
-ParsedExpr parseId(TypeData &typeData, Ast &ast, std::string id, TokenIter it, TokenIter end, DelimPred isDelim){
+ParsedExpr parseId(TypeData &typeData, Ast &ast, std::string id, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	std::unique_ptr<Expr> value;
 	
 	if(auto type = findTypeByString(typeData, id)){
@@ -432,7 +431,7 @@ ParsedExpr parseId(TypeData &typeData, Ast &ast, std::string id, TokenIter it, T
 	return parseLeadingValue(typeData, ast, std::move(value), it, end, std::move(isDelim));
 }
 
-ParsedExpr parseExpr(TypeData &typeData, Ast &ast, TokenIter it, TokenIter end, DelimPred isDelim){
+ParsedExpr parseExpr(TypeData &typeData, Ast &ast, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	if(it == end || isDelim(*it)) return {nullptr, it};
 
 	while(it != end && it->type == TokenType::space)
@@ -452,11 +451,8 @@ ParsedExpr parseExpr(TypeData &typeData, Ast &ast, TokenIter it, TokenIter end, 
 	}
 }
 
-ParseResult ilang::parse(gsl::span<const Token> toks, TypeData &typeData, Ast ast){
+ParseResult ilang::parse(TokenIterator it, TokenIterator endIt, TypeData &typeData, Ast ast){
 	ParseResult res;
-
-	auto it = toks.cbegin();
-	auto endIt = toks.cend();
 
 	auto isNewLine = [](const Token &tok) -> bool{
 		return tok.type == TokenType::newLine;
@@ -471,11 +467,12 @@ ParseResult ilang::parse(gsl::span<const Token> toks, TypeData &typeData, Ast as
 	res.expr = handle;
 
 	// must increment iterator because ::parse____ functions do not eat delimiter tokens
-	if(parsed.it != endIt){
+	if(parsed.it != endIt)
 		++parsed.it;
-		res.remainder = toks.subspan(endIt - parsed.it);
-	}
 
+	res.remainder = parsed.it;
+	res.end = endIt;
+	
 	res.typeData = &typeData;
 	res.ast = std::move(ast);
 

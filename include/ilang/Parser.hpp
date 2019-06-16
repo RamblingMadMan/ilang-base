@@ -1,8 +1,6 @@
 #ifndef ILANG_PARSER_HPP
 #define ILANG_PARSER_HPP 1
 
-#include "gsl/span"
-
 #include "ilang/Lexer.hpp"
 
 #include "Expr.hpp"
@@ -46,7 +44,7 @@ namespace ilang{
 		ExprHandle expr = nullptr;
 		
 		//! The remainder after parsing
-		gsl::span<const Token> remainder;
+		TokenIterator remainder, end;
 
 		//! Type data used in calculations
 		TypeData *typeData;
@@ -56,11 +54,15 @@ namespace ilang{
 	};
 	
 	//! Parse a single expression
-	ParseResult parse(gsl::span<const Token> toks, TypeData &typeData, Ast ast = Ast());
+	ParseResult parse(TokenIterator begin, TokenIterator end, TypeData &typeData, Ast ast = Ast());
+
+	inline ParseResult parse(const std::vector<Token> &toks, TypeData &typeData, Ast ast = Ast()){
+		return parse(cbegin(toks), cend(toks), typeData, std::move(ast));
+	}
 
 	//! Parse another expression using the remainder of the last parse
 	inline ParseResult parse(ParseResult parsed){
-		return parse(std::move(parsed.remainder), *parsed.typeData, std::move(parsed.ast));
+		return parse(parsed.remainder, parsed.end, *parsed.typeData, std::move(parsed.ast));
 	}
 	
 	inline ParseResult parse(std::string_view src, TypeData &typeData, Ast ast = Ast{}){
@@ -69,12 +71,16 @@ namespace ilang{
 	}
 
 	//! Parse all tokens in a stream
-	inline Ast parseAll(gsl::span<const Token> toks, TypeData &typeData, Ast ast = Ast{}){
-		auto res = parse(toks, typeData, std::move(ast));
+	inline Ast parseAll(TokenIterator begin, TokenIterator end, TypeData &typeData, Ast ast = Ast{}){
+		auto res = parse(begin, end, typeData, std::move(ast));
 		while(res.expr)
 			res = parse(std::move(res));
 		
 		return std::move(res.ast);
+	}
+	
+	inline Ast parseAll(const std::vector<Token> &toks, TypeData &typeData, Ast ast = Ast{}){
+		return parseAll(cbegin(toks), cend(toks), typeData, std::move(ast));
 	}
 
 	inline Ast parseAll(std::string_view src, TypeData &typeData, Ast ast = Ast{}){

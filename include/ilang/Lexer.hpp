@@ -87,6 +87,8 @@ namespace ilang{
 		
 		return ret;
 	}
+
+	using TokenIterator = std::vector<Token>::const_iterator;
 	
 	/**
 	 * Implementation details
