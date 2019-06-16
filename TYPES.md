@@ -18,7 +18,7 @@ We can think of a type as a restriction on the range of values of some other typ
 
 This type is named the `Infinity` type and all types are based on it at the lowest level.
 
-![Diagram of base types and their bases](/home/keith/Development/Warparty/ilang/ilang-repl/deps/ilang-eval/deps/ilang-parser/deps/ilang-types/base-diagram.png)
+![Diagram of base types and their bases](base-diagram.png)
 
 ### `Infinity`
 
