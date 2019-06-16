@@ -23,6 +23,7 @@ set(
 	include/ilang/Type.hpp
 	include/ilang/Expr.hpp
 	include/ilang/Parser.hpp
+	include/ilang/Eval.hpp
 )
 
 set(
@@ -35,6 +36,7 @@ set(
 	src/Expr.cpp
 	src/Type.cpp
 	src/Parser.cpp
+	src/Eval.cpp
 )
 
 add_library(ilang-base ${ILANG_BASE_HEADERS} ${ILANG_BASE_SOURCE})
