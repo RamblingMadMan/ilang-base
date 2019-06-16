@@ -1,0 +1,31 @@
+digraph G {
+    rankdir=LR;
+    
+    Infinity -> Unit;
+    Infinity -> String;
+    Infinity -> Number;
+    Infinity -> Function;
+    Infinity -> "Tree T";
+    Infinity -> Type;
+    
+    Infinity -> Infinity;
+
+    "Tree T" -> "List T";
+    
+    "List T" -> "Array T";
+    "List T" -> "Linked T";
+    
+    "Array T" -> "StaticArray T N";
+    "Array T" -> "DynamicArray T";
+    
+    String -> ASCIIString;
+    String -> UTF8String;
+    
+    Number -> Complex;
+    Complex -> Imaginary;
+    Complex -> Real;
+    Real -> Rational;
+    Rational -> Integer;
+    Integer -> Natural;
+    Natural -> Boolean;
+}
