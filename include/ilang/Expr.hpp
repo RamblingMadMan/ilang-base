@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <functional>
+#include <vector>
 
 #include "ilang/Type.hpp"
 #include "ilang/AReal.hpp"
@@ -17,6 +18,8 @@ namespace ilang{
 	
 	using ExprHandle = const Expr*;
 	using TypeExprHandle = const TypeExpr*;
+
+	using ExprIterator = std::vector<ExprHandle>::const_iterator;
 	
 	//! An Expression
 	struct Expr{
