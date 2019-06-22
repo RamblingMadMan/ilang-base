@@ -9,14 +9,14 @@
 #include "ilang/AReal.hpp"
 #include "ilang/ARatio.hpp"
 
+#include "fwd.hpp"
+
 //! \file
 
 namespace ilang{
-	struct Expr;
 	struct TypeExpr;
 	struct Ast;
 	
-	using ExprHandle = const Expr*;
 	using TypeExprHandle = const TypeExpr*;
 
 	using ExprIterator = std::vector<ExprHandle>::const_iterator;
@@ -210,9 +210,74 @@ namespace ilang{
 			std::string_view id() const noexcept override{ return name; }
 		};
 		
+		struct ResultTypes: TypeExpr{
+			std::string toString() const noexcept override{
+				auto ret = types[0]->toString();
+				for(std::size_t i = 1; i < types.size(); i++)
+					ret += " | " + types[i]->toString();
+				
+				return ret;
+			}
+			
+			TypeExprHandle typeExpr() const noexcept override{ return types[0]->typeExpr(); }
+			
+			TypeHandle resolve(TypeData &typeData, ResolveFn resolver) const override;
+			
+			std::vector<TypeExprPtr> types;
+		};
+		
+		struct Return: Expr{
+			std::string toString() const noexcept override{
+				return "=> " + result->toString();
+			}
+			
+			TypeExprHandle typeExpr() const noexcept override{ return result->typeExpr(); }
+			
+			ExprPtr result;
+		};
+		
+		struct Block: Expr{
+			std::string toString() const noexcept override{
+				std::string ret;
+				for(auto &&expr : body)
+					ret += "    " + expr->toString();
+				return ret;
+			}
+			
+			TypeExprHandle typeExpr() const noexcept override{ return type.get(); }
+			
+			std::vector<ExprPtr> body;
+			TypeExprPtr type;
+		};
+		
+		struct FnType: TypeExpr{
+			TypeExprHandle typeExpr() const noexcept override{ return resultType->typeExpr(); }
+			
+			std::string toString() const noexcept override{
+				std::string ret;
+				if(!paramTypes.empty()){
+					ret = paramTypes[0]->toString();
+					
+					for(std::size_t i = 1; i < paramTypes.size(); i++)
+						ret += " -> " + paramTypes[i]->toString();
+				}
+				else{
+					ret = "()";
+				}
+				
+				ret += " -> " + resultType->toString();
+				return ret;
+			}
+			
+			TypeHandle resolve(TypeData &typeData, ResolveFn resolver) const override;
+			
+			std::vector<TypeExprPtr> paramTypes;
+			TypeExprPtr resultType;
+		};
+		
 		//! Function declaration expression
 		struct FnDecl: LValue{
-			TypeExprHandle typeExpr() const noexcept override{ return fnType.get(); }
+			const FnType *typeExpr() const noexcept override{ return fnType.get(); }
 			
 			std::string_view id() const noexcept override{ return name; }
 			
@@ -230,7 +295,8 @@ namespace ilang{
 			
 			std::string name;
 			std::vector<std::unique_ptr<ParamDecl>> params;
-			TypeExprPtr fnType;
+			ExprPtr body;
+			std::unique_ptr<FnType> fnType;
 		};
 		
 		//! Unresolved reference expression
@@ -246,6 +312,8 @@ namespace ilang{
 		
 		//! Resolved reference expression
 		struct ResolvedRef: Ref{
+			explicit ResolvedRef(const LValue *refed_ = nullptr): refed(refed_){}
+			
 			std::string toString() const noexcept override{ return std::string(refed->id()); }
 			TypeExprHandle typeExpr() const noexcept override{ return refed->typeExpr(); }
 			std::string_view id() const noexcept override{ return refed->id(); }
@@ -256,11 +324,29 @@ namespace ilang{
 		
 		//! Function application expression
 		struct Application: Expr{
+			std::string toString() const noexcept override{
+				auto ret = functor->toString();
+				for(auto &&arg : args)
+					ret += " " + arg->toString();
+				
+				return ret;
+			}
+			
 			TypeExprHandle typeExpr() const noexcept override{ return resultType.get(); }
 			
-			ExprHandle functor;
-			std::vector<ExprHandle> args;
+			ExprPtr functor;
+			std::vector<ExprPtr> args;
 			TypeExprPtr resultType;
+		};
+		
+		struct ApplicationType: TypeExpr{
+			std::string toString() const noexcept override{ return "!APPLICATION!"; }
+			
+			TypeExprHandle typeExpr() const noexcept override{ return appExpr->functor->typeExpr()->typeExpr(); }
+			
+			TypeHandle resolve(TypeData &typeData, ResolveFn resolved) const override;
+			
+			const Application *appExpr;
 		};
 		
 		struct BinOpType: TypeExpr{

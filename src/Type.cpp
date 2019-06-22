@@ -31,7 +31,8 @@ TypeHandle createSizedNumberType(
 	type->base = base;
 	type->str = name + bitsStr;
 	type->mangled = mangledName + bitsStr;
-
+	type->bits = numBits;
+	
 	return data.storage.emplace_back(std::move(type)).get();
 }
 
@@ -106,7 +107,7 @@ bool impl_isInfinityType(TypeHandle type) noexcept{
 }
 
 bool ilang::hasBaseType(TypeHandle type, TypeHandle baseType) noexcept{
-	if(impl_isInfinityType(baseType))
+	if(type == baseType || impl_isInfinityType(baseType))
 		return true;
 	
 	while(1){
@@ -409,6 +410,7 @@ TypeHandle ilang::getStaticArrayType(TypeData &data, TypeHandle t, std::size_t n
 	newType->str = "(StaticArray " + t->str + " " + nStr + ")";
 	newType->mangled = "a" + nStr + t->mangled;
 	newType->types = {t};
+	newType->bits = n;
 	
 	auto ptr = data.storage.emplace_back(std::move(newType)).get();
 	
@@ -443,11 +445,14 @@ TypeHandle ilang::getSumType(TypeData &data, std::vector<TypeHandle> innerTypes)
 	newType->mangled += innerTypes[0]->mangled;
 	
 	newType->str = innerTypes[0]->str;
+
 	
 	for(std::size_t i = 1; i < innerTypes.size(); i++){
 		newType->mangled += innerTypes[i]->mangled;
 		newType->str += " | " + innerTypes[i]->str;
 	}
+
+	newType->bits = innerTypes.size();
 	
 	auto[it, good] = data.sumTypes.try_emplace(newType->types, newType.get());
 	
@@ -479,8 +484,10 @@ TypeHandle ilang::getProductType(TypeData &data, std::vector<TypeHandle> innerTy
 		newType->str += " * " + innerTypes[i]->str;
 	}
 
-	newType->types = std::move(innerTypes);
+	newType->bits = innerTypes.size();
 	
+	newType->types = std::move(innerTypes);
+		
 	auto[it, good] = data.productTypes.try_emplace(newType->types, newType.get());
 	
 	if(!good){

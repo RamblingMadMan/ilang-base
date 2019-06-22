@@ -21,21 +21,18 @@ namespace ilang{
 
 	//! Abstract syntax tree
 	struct Ast{
-		auto findLValue(std::string id){
-			std::vector<ExprHandle> res;
-			for(auto expr : root){
-				if(auto lvalue = dynamic_cast<const Exprs::LValue*>(expr)){
-					if(lvalue->id() == id)
-						res.emplace_back(lvalue);
-				}
-			}
+		const Exprs::LValue *findLValue(std::string id){
+			auto res = boundNames.find(id);
+			if(res != end(boundNames))
+				return res->second;
 			
-			return res;
+			return nullptr;
 		}
 		
 		std::vector<ExprHandle> root;
 		std::vector<std::unique_ptr<Expr>> storage;
 		std::map<TypeHandle, std::unique_ptr<Exprs::TypeLiteral>> types;
+		std::map<std::string, const Exprs::LValue*> boundNames;
 	};
 
 	//! Data type returned from parse
@@ -50,42 +47,59 @@ namespace ilang{
 		TypeData *typeData;
 		
 		//! Abstract syntax tree
-		Ast ast;
+		Ast *ast;
 	};
 	
+	using RefResolveFn = std::function<ExprPtr(TypeData&, Ast&, const Exprs::UnresolvedRef*)>;
+	
+	inline ExprPtr defaultRefResolve(TypeData &typeData, Ast &ast, const Exprs::UnresolvedRef *unresolved){
+		auto lvalue = ast.findLValue(unresolved->name);
+		if(lvalue)
+			return std::make_unique<Exprs::ResolvedRef>(lvalue);
+		
+		auto type = findTypeByString(typeData, unresolved->name);
+		if(type){
+			auto ret = std::make_unique<Exprs::TypeLiteral>(ast.types[findTypeType(typeData)].get());
+			ret->value = type;
+			return ret;
+		}
+		
+		return nullptr;
+	}
+	
 	//! Parse a single expression
-	ParseResult parse(TokenIterator begin, TokenIterator end, TypeData &typeData, Ast ast = Ast());
+	ParseResult parse(TokenIterator begin, TokenIterator end, TypeData &typeData, Ast &ast, RefResolveFn refResolve = defaultRefResolve);
 
-	inline ParseResult parse(const std::vector<Token> &toks, TypeData &typeData, Ast ast = Ast()){
-		return parse(cbegin(toks), cend(toks), typeData, std::move(ast));
+	inline ParseResult parse(const std::vector<Token> &toks, TypeData &typeData, Ast &ast, RefResolveFn refResolve = defaultRefResolve){
+		return parse(cbegin(toks), cend(toks), typeData, ast, std::move(refResolve));
 	}
 
 	//! Parse another expression using the remainder of the last parse
-	inline ParseResult parse(ParseResult parsed){
-		return parse(parsed.remainder, parsed.end, *parsed.typeData, std::move(parsed.ast));
+	inline ParseResult parse(ParseResult parsed, RefResolveFn refResolve){
+		return parse(parsed.remainder, parsed.end, *parsed.typeData, *parsed.ast, std::move(refResolve));
 	}
 	
-	inline ParseResult parse(std::string_view src, TypeData &typeData, Ast ast = Ast{}){
+	inline ParseResult parse(std::string_view src, TypeData &typeData, Ast &ast, RefResolveFn refResolve = defaultRefResolve){
 		auto toks = lexAll(src);
-		return parse(toks, typeData, std::move(ast));
+		return parse(toks, typeData, ast, std::move(refResolve));
 	}
 
 	//! Parse all tokens in a stream
-	inline Ast parseAll(TokenIterator begin, TokenIterator end, TypeData &typeData, Ast ast = Ast{}){
-		auto res = parse(begin, end, typeData, std::move(ast));
+	inline Ast &parseAll(TokenIterator begin, TokenIterator end, TypeData &typeData, Ast &ast, RefResolveFn refResolve = defaultRefResolve){
+		auto res = parse(begin, end, typeData, ast, std::move(refResolve));
 		while(res.expr)
-			res = parse(std::move(res));
+			res = parse(std::move(res), std::move(refResolve));
 		
-		return std::move(res.ast);
+		return ast;
 	}
 	
-	inline Ast parseAll(const std::vector<Token> &toks, TypeData &typeData, Ast ast = Ast{}){
-		return parseAll(cbegin(toks), cend(toks), typeData, std::move(ast));
+	inline Ast &parseAll(const std::vector<Token> &toks, TypeData &typeData, Ast &ast, RefResolveFn refResolve = defaultRefResolve){
+		return parseAll(cbegin(toks), cend(toks), typeData, ast, std::move(refResolve));
 	}
 
-	inline Ast parseAll(std::string_view src, TypeData &typeData, Ast ast = Ast{}){
+	inline Ast &parseAll(std::string_view src, TypeData &typeData, Ast &ast, RefResolveFn refResolve = defaultRefResolve){
 		auto toks = lexAll(src);
-		return parseAll(toks, typeData, std::move(ast));
+		return parseAll(toks, typeData, ast, std::move(refResolve));
 	}
 }
 

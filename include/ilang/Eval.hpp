@@ -37,15 +37,15 @@ namespace ilang{
 	struct EvalData{
 		TypeData typeData;
 		
-		using FunctionGen = std::function<ResultPtr(EvalData&, std::vector<ResultPtr>)>;
-		std::map<std::string, std::map<TypeHandle, FunctionGen>> registeredFunctions;
+		//using FunctionGen = std::function<ResultPtr(EvalData&, std::vector<ResultPtr>)>;
+		std::map<std::string, ResultPtr> registeredFunctions;
 		std::map<std::string, ResultPtr> boundNames;
 	};
 
 	//! Data type for the result of an evaluation
 	struct Result{
 		//! get the type of the result
-		virtual TypeHandle resolveType(const TypeData &typeData) const noexcept = 0;
+		virtual TypeHandle resolveType(TypeData &typeData) const noexcept = 0;
 		
 		//! get the result as a string
 		virtual std::string toString() const = 0;
@@ -65,7 +65,7 @@ namespace ilang{
 	};
 	
 	struct UnitResult: Result{
-		TypeHandle resolveType(const TypeData &typeData) const noexcept override{
+		TypeHandle resolveType(TypeData &typeData) const noexcept override{
 			return findUnitType(typeData);
 		}
 		
@@ -77,7 +77,7 @@ namespace ilang{
 	struct TypeResult: Result{
 		TypeResult(TypeHandle value_): value(value_){}
 		
-		TypeHandle resolveType(const TypeData &typeData) const noexcept override{
+		TypeHandle resolveType(TypeData &typeData) const noexcept override{
 			return findTypeType(typeData);
 		}
 		
@@ -98,7 +98,7 @@ namespace ilang{
 		explicit NumberResult(double d): NumberResult(AReal(d)){}
 		explicit NumberResult(std::int64_t i): NumberResult(AInt(i)){}
 		
-		TypeHandle resolveType(const TypeData &typeData) const noexcept override;
+		TypeHandle resolveType(TypeData &typeData) const noexcept override;
 		
 		std::string toString() const noexcept override{
 			return std::visit([](auto &&v){ return v.toString(); }, value);
@@ -115,7 +115,7 @@ namespace ilang{
 	struct RefResult: Result{
 		explicit RefResult(ResultHandle other): value(other){}
 		
-		TypeHandle resolveType(const TypeData &typeData) const noexcept override{
+		TypeHandle resolveType(TypeData &typeData) const noexcept override{
 			return value->resolveType(typeData);
 		}
 		
@@ -134,7 +134,7 @@ namespace ilang{
 	struct StringResult: Result{
 		explicit StringResult(std::string value_): value(std::move(value_)){}
 		
-		TypeHandle resolveType(const TypeData &typeData) const noexcept override;
+		TypeHandle resolveType(TypeData &typeData) const noexcept override;
 		
 		std::string toString() const noexcept override{ return value; }
 
@@ -144,17 +144,18 @@ namespace ilang{
 	};
 	
 	struct CallableResult: Result{
-		using Fn = std::function<ResultPtr(EvalData&, std::vector<ResultPtr>)>;
+		using CallbackFn = std::function<ResultPtr(EvalData&, std::vector<ResultPtr>)>;
 		
-		explicit CallableResult(Fn fn): value(fn){}
+		explicit CallableResult(CallbackFn fn): value(fn){}
 		
-		TypeHandle resolveType(const TypeData &typeData) const noexcept override;
+		TypeHandle resolveType(TypeData &typeData) const noexcept override;
 		
 		std::string toString() const noexcept override;
 		
 		ResultPtr call(EvalData &data, std::vector<ResultPtr> args) const override;
 		
-		Fn value;
+		CallbackFn value;
+		TypeHandle fnType;
 	};
 
 	struct ObjectResult: Result{
@@ -163,7 +164,7 @@ namespace ilang{
 	};
 
 	struct ListResult: Result{
-		TypeHandle resolveType(const TypeData &typeData) const noexcept override;
+		TypeHandle resolveType(TypeData &typeData) const noexcept override;
 		
 		std::string toString() const noexcept override;
 		
@@ -171,7 +172,7 @@ namespace ilang{
 	};
 	
 	struct ProductResult: Result{
-		TypeHandle resolveType(const TypeData & typeData) const noexcept override;
+		TypeHandle resolveType(TypeData & typeData) const noexcept override;
 		
 		std::string toString() const noexcept override;
 		
@@ -184,14 +185,14 @@ namespace ilang{
 		ExprIterator rest, end;
 	};
 
-	std::pair<EvalResult, EvalData> eval(ExprIterator begin, ExprIterator end, EvalData data = EvalData{});
+	EvalResult eval(ExprIterator begin, ExprIterator end, EvalData &data);
 	
-	inline auto eval(const std::vector<ExprHandle> &exprs, EvalData data = EvalData()){
-		return eval(cbegin(exprs), cend(exprs), std::move(data));
+	inline auto eval(const std::vector<ExprHandle> &exprs, EvalData &data){
+		return eval(cbegin(exprs), cend(exprs), data);
 	}
 
-	inline auto eval(EvalResult remainder, EvalData data = EvalData{}){
-		return eval(remainder.rest, remainder.end, std::move(data));
+	inline auto eval(EvalResult remainder, EvalData &data){
+		return eval(remainder.rest, remainder.end, data);
 	}
 
 	namespace detail{
@@ -309,9 +310,11 @@ namespace ilang{
 			static auto wrap(TypeData &data, std::function<void()> fn) -> std::function<ResultPtr(EvalData&, std::vector<ResultPtr>)>{
 				auto retType = findUnitType(data);
 				
-				auto wrapped = [fn{std::move(fn)}, retType](EvalData &data, std::vector<ResultPtr> args){					
-					if(args.size() != 0)
+				auto wrapped = [fn{std::move(fn)}, retType](EvalData &data, std::vector<ResultPtr> args){
+					if(args.size() != 1)
 						throw EvalError("wrong number of arguments");
+					else if(!dynamic_cast<const UnitResult*>(args[0].get()))
+						throw EvalError("expected single unit argument");
 					
 					fn();
 					
@@ -324,22 +327,21 @@ namespace ilang{
 	}
 	
 	template<typename FnType>
-	inline std::pair<ResultPtr, EvalData> registerEvalFn(const std::string &name, std::function<FnType> fn, EvalData data){
+	inline ResultPtr registerEvalFn(const std::string &name, std::function<FnType> fn, EvalData &data){
 		auto fnType = detail::CppTypeGetter<FnType>::get(data.typeData);
 		auto wrappedFn = detail::FnWrapper<FnType>::wrap(data.typeData, std::move(fn));
 		
-		auto &&functionMap = data.registeredFunctions[name];
+		data.registeredFunctions[name] = std::make_unique<CallableResult>(std::move(wrappedFn));
 		
-		functionMap[fnType] = std::move(wrappedFn);
-		return {std::make_unique<CallableResult>(functionMap[fnType]), std::move(data)};
+		return std::make_unique<RefResult>(data.registeredFunctions[name].get());
 	}
 	
 	template<typename T>
-	inline std::pair<ResultHandle, EvalData> bindEvalName(const std::string &name, T value, EvalData data){
+	inline ResultPtr bindEvalName(const std::string &name, T value, EvalData &data){
 		auto wrapped = detail::ValueWrapper<T>::wrap(value);
 		auto ptr = wrapped.get();
 		data.boundNames[name] = std::move(wrapped);
-		return {ptr, std::move(data)};
+		return std::make_unique<RefResult>(ptr);
 	}
 }
 

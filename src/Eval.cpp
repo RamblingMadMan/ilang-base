@@ -31,9 +31,8 @@ ResultPtr Result::call(EvalData&, std::vector<ResultPtr> args) const{
 	return nullptr;
 }
 
-TypeHandle CallableResult::resolveType(const TypeData &typeData) const noexcept{
-	std::fprintf(stderr, "warning: finding the type of callable results is not currently supported\n");
-	return nullptr;
+TypeHandle CallableResult::resolveType(TypeData &typeData) const noexcept{
+	return fnType;
 }
 
 std::string CallableResult::toString() const noexcept{
@@ -66,7 +65,7 @@ std::string ProductResult::toString() const noexcept{
 	return res;
 }
 
-TypeHandle ListResult::resolveType(const TypeData &typeData) const noexcept{
+TypeHandle ListResult::resolveType(TypeData &typeData) const noexcept{
 	std::vector<TypeHandle> innerTypes;
 	innerTypes.resize(values.size());
 	
@@ -86,7 +85,7 @@ TypeHandle ListResult::resolveType(const TypeData &typeData) const noexcept{
 	return findStaticArrayType(typeData, commonType, values.size());
 }
 
-TypeHandle ProductResult::resolveType(const TypeData &typeData) const noexcept{
+TypeHandle ProductResult::resolveType(TypeData &typeData) const noexcept{
 	std::vector<TypeHandle> innerTypes;
 	innerTypes.resize(values.size());
 	
@@ -260,7 +259,7 @@ auto getBinopFn(std::string_view op) -> std::function<ResultPtr(ResultHandle, Re
 	};
 }
 
-TypeHandle NumberResult::resolveType(const TypeData &data) const noexcept{
+TypeHandle NumberResult::resolveType(TypeData &data) const noexcept{
 	return std::visit(
 		detail::Overloaded{
 			[&data](const AInt&){ return findIntegerType(data); },
@@ -271,7 +270,7 @@ TypeHandle NumberResult::resolveType(const TypeData &data) const noexcept{
 	);
 }
 
-TypeHandle StringResult::resolveType(const TypeData &data) const noexcept{
+TypeHandle StringResult::resolveType(TypeData &data) const noexcept{
 	return findStringType(data);
 }
 
@@ -345,17 +344,29 @@ ResultPtr StringResult::add(ResultHandle rhs) const{
 	return std::make_unique<StringResult>(value + rhsStr->value);
 }
 
-std::pair<EvalResult, EvalData> eval_result(ResultPtr &result, EvalData &data){
-	return {EvalResult{std::move(result)}, std::move(data)};
+using ParamResolver = std::function<ResultPtr(const Exprs::ParamDecl*)>;
+
+inline ParamResolver defaultParamResolver(){ return [](const Exprs::ParamDecl*){ return nullptr; }; }
+
+ResultPtr evalExpr(ExprHandle expr, EvalData &data, ParamResolver paramResolver);
+
+ResultPtr evalApplication(const Exprs::Application *app, EvalData &data, ParamResolver paramResolver){
+	auto fnRes = evalExpr(app->functor.get(), data, paramResolver);
+	
+	std::vector<ResultPtr> argResults;
+	argResults.reserve(app->args.size());
+	
+	for(auto &&arg : app->args)
+		argResults.emplace_back(evalExpr(arg.get(), data, paramResolver));
+	
+	return fnRes->call(data, std::move(argResults));
 }
 
-ResultPtr evalExpr(ExprHandle expr, EvalData &data);
-
-ResultPtr evalListLiteral(const Exprs::ListLiteral *list, EvalData &data){
+ResultPtr evalListLiteral(const Exprs::ListLiteral *list, EvalData &data, ParamResolver paramResolver){
 	std::vector<ResultPtr> results;
 	results.reserve(list->elements.size());
 	for(auto &&expr : list->elements)
-		results.emplace_back(evalExpr(expr.get(), data));
+		results.emplace_back(evalExpr(expr.get(), data, paramResolver));
 	
 	auto result = std::make_unique<ListResult>();
 	result->values = std::move(results);
@@ -363,11 +374,11 @@ ResultPtr evalListLiteral(const Exprs::ListLiteral *list, EvalData &data){
 	return result;
 }
 
-ResultPtr evalProductLiteral(const Exprs::ProductLiteral *product, EvalData &data){
+ResultPtr evalProductLiteral(const Exprs::ProductLiteral *product, EvalData &data, ParamResolver paramResolver){
 	std::vector<ResultPtr> results;
 	results.reserve(product->elements.size());
 	for(auto &&expr : product->elements)
-		results.emplace_back(evalExpr(expr.get(), data));
+		results.emplace_back(evalExpr(expr.get(), data, paramResolver));
 	
 	if(results.size() == 1)
 		return std::move(results[0]);
@@ -378,13 +389,13 @@ ResultPtr evalProductLiteral(const Exprs::ProductLiteral *product, EvalData &dat
 	return result;
 }
 
-ResultPtr evalLiteral(const Exprs::Literal *lit, EvalData &data){
+ResultPtr evalLiteral(const Exprs::Literal *lit, EvalData &data, ParamResolver paramResolver){
 	auto type = lit->typeExpr()->resolve(data.typeData, [](TypeData&, TypeHandle partial){ throw EvalError("Partial typing currently unimplemented"); return partial; });
 	
 	if(auto list = dynamic_cast<const Exprs::ListLiteral*>(lit))
-		return evalListLiteral(list, data);
+		return evalListLiteral(list, data, std::move(paramResolver));
 	else if(auto product = dynamic_cast<const Exprs::ProductLiteral*>(lit))
-		return evalProductLiteral(product, data);
+		return evalProductLiteral(product, data, std::move(paramResolver));
 	else if(isUnitType(type, data.typeData))
 		return std::make_unique<UnitResult>();
 	else if(auto typeLit = dynamic_cast<const Exprs::TypeLiteral*>(lit))
@@ -403,33 +414,40 @@ ResultPtr evalLiteral(const Exprs::Literal *lit, EvalData &data){
 		throw EvalError("Unknown literal type", lit);
 }
 
-ResultPtr evalBinop(const Exprs::BinOp *binop, EvalData &data){
+ResultPtr evalBinop(const Exprs::BinOp *binop, EvalData &data, ParamResolver paramResolver){
 	ResultHandle res;
 	
 	auto lstr = binop->lhs->toString();
 	auto rstr = binop->rhs->toString();
 	auto opstr = binop->op;
 
-	auto lhsRes = evalExpr(binop->lhs.get(), data);
-	auto rhsRes = evalExpr(binop->rhs.get(), data);
+	auto lhsRes = evalExpr(binop->lhs.get(), data, paramResolver);
+	auto rhsRes = evalExpr(binop->rhs.get(), data, paramResolver);
 	auto binopFn = getBinopFn(binop->op);
 
 	return binopFn(lhsRes.get(), rhsRes.get());
 }
 
-ResultPtr evalRef(const Exprs::Ref *ref, EvalData &data){
+ResultPtr evalRef(const Exprs::Ref *ref, EvalData &data, ParamResolver paramResolver){
 	if(auto unresolved = dynamic_cast<const Exprs::UnresolvedRef*>(ref)){
 		auto boundRes = data.boundNames.find(unresolved->name);
 		if(boundRes != end(data.boundNames))
 			return std::make_unique<RefResult>(boundRes->second.get());
 		
+		auto registered = data.registeredFunctions.find(unresolved->name);
+		if(registered != end(data.registeredFunctions))
+			return std::make_unique<RefResult>(registered->second.get());
+		
 		throw EvalError("Could not resolve reference", ref);
+	}
+	else if(auto resolved = dynamic_cast<const Exprs::ResolvedRef*>(ref)){
+		return evalExpr(resolved->refed, data, std::move(paramResolver));
 	}
 	else
 		throw EvalError("internal error: unrecognized reference type", ref);
 }
 
-ResultPtr evalTypeExpr(TypeExprHandle expr, EvalData &data){
+ResultPtr evalTypeExpr(TypeExprHandle expr, EvalData &data, ParamResolver paramResolver){
 	auto type = expr->resolve(
 		data.typeData, 
 		[](TypeData&, TypeHandle partial){
@@ -441,27 +459,93 @@ ResultPtr evalTypeExpr(TypeExprHandle expr, EvalData &data){
 	return std::make_unique<TypeResult>(type);
 }
 
-ResultPtr evalExpr(ExprHandle expr, EvalData &data){
-	if(auto type = dynamic_cast<TypeExprHandle>(expr))
-		return evalTypeExpr(type, data);
+ResultPtr evalFnDecl(const Exprs::FnDecl *decl, EvalData &data, ParamResolver paramResolver){
+	auto fnType = decl->typeExpr()->resolve(data.typeData, [](auto&, auto p){ return p; });
+	
+	auto fn = [decl, fnType, resolver{std::move(paramResolver)}](EvalData &data, std::vector<ResultPtr> args){
+		if(args.size() != decl->params.size())
+			throw EvalError("Must pass exact amount of arguments to callable result (auto-currying coming soon)");
+		
+		std::vector<TypeHandle> argTypes;
+		argTypes.resize(args.size());
+		std::transform(
+			cbegin(args), cend(args),
+			begin(argTypes),
+			[&](const ResultPtr &ptr){ return ptr->resolveType(data.typeData); }
+		);
+		
+		std::map<TypeHandle, TypeHandle> mappedPartials;
+		
+		for(std::size_t i = 0; i < decl->params.size(); i++){
+			if(isPartialType(fnType->types[i], data.typeData))
+				mappedPartials[fnType->types[i]] = argTypes[i];
+		}
+		
+		auto typeResolver = [&mappedPartials](auto&, TypeHandle partial){
+			auto res = mappedPartials.find(partial);
+			if(res != cend(mappedPartials))
+				return res->second;
+			
+			return partial;
+		};
+		
+		auto calledFnType = decl->typeExpr()->resolve(data.typeData, typeResolver);
+		
+		std::map<ExprHandle, ResultPtr> paramMap;
+		
+		for(std::size_t i = 0; i < decl->params.size(); i++){
+			if(!hasBaseType(argTypes[i], calledFnType->types[i]))
+				throw EvalError(
+					"Could not convert argument " + std::to_string(i) + " from " + argTypes[i]->str + " to " + calledFnType->types[i]->str
+				);
+			
+			paramMap[decl->params[i].get()] = std::move(args[i]);
+		}
+		
+		auto argResolver = [&paramMap, &resolver](const Exprs::ParamDecl *param) -> ResultPtr{
+			auto res = paramMap.find(param);
+			if(res != end(paramMap))
+				return std::make_unique<RefResult>(res->second.get());
+			
+			return resolver(param);
+		};
+		
+		return evalExpr(decl->body.get(), data, std::move(argResolver));
+	};
+	
+	auto ret = std::make_unique<CallableResult>(std::move(fn));
+	ret->fnType = fnType;
+	
+	return ret;
+}
+
+ResultPtr evalExpr(ExprHandle expr, EvalData &data, ParamResolver paramResolver){
+	if(auto param = dynamic_cast<const Exprs::ParamDecl*>(expr))
+		return paramResolver(param);
+	else if(auto type = dynamic_cast<TypeExprHandle>(expr))
+		return evalTypeExpr(type, data, paramResolver);
 	else if(auto lit = dynamic_cast<const Exprs::Literal*>(expr))
-		return evalLiteral(lit, data);
+		return evalLiteral(lit, data, paramResolver);
 	else if(auto binop = dynamic_cast<const Exprs::BinOp*>(expr))
-		return evalBinop(binop, data);
+		return evalBinop(binop, data, paramResolver);
 	else if(auto ref = dynamic_cast<const Exprs::Ref*>(expr))
-		return evalRef(ref, data);
+		return evalRef(ref, data, paramResolver);
+	else if(auto decl = dynamic_cast<const Exprs::FnDecl*>(expr))
+		return evalFnDecl(decl, data, paramResolver);
+	else if(auto app = dynamic_cast<const Exprs::Application*>(expr))
+		return evalApplication(app, data, paramResolver);
 	else if(!expr)
 		throw EvalError("internal error: nullptr given as expression", nullptr);
 	else
 		throw EvalError("Unexpected expression '" + expr->toString() + "'", expr);
 }
 
-std::pair<EvalResult, EvalData> ilang::eval(ExprIterator begin, ExprIterator end, EvalData data){
+EvalResult ilang::eval(ExprIterator begin, ExprIterator end, EvalData &data){
 	EvalResult res;
 
 	res.rest = begin + 1;
 	res.end = end;
-	res.result = evalExpr(*begin, data);
+	res.result = evalExpr(*begin, data, defaultParamResolver());
 
-	return std::make_pair(std::move(res), std::move(data));
+	return res;
 }

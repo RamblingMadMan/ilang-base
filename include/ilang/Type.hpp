@@ -8,6 +8,8 @@
 #include <optional>
 #include <map>
 
+#include "ilang/fwd.hpp"
+
 /** \file */
 
 namespace ilang{
@@ -26,6 +28,17 @@ namespace ilang{
 
 		//! The type name as it would appear in binaries.
 		std::string mangled;
+		
+		/**
+		 * \brief Information stored about type
+		 * 
+		 * This is usually just 0
+		 * 
+		 * For sized types this will be the bit-width
+		 * For static list types this will be the number of elements
+		 * For product and sum types this will be the number of elements
+		 **/
+		std::uint64_t bits = 0;
 
 		/**
 		 * \brief Inner types of the type.
@@ -54,9 +67,12 @@ namespace ilang{
 		 **/
 		std::vector<std::string> names;
 	};
-
-	//! \brief Used for type comparisons
-	using TypeHandle = const Type*;
+	
+	//! \brief Refinement data for a type
+	struct TypeRefinement{
+		ExprHandle typeRef;
+		std::vector<ExprHandle> conditions;
+	};
 
 	/**
 	 * \brief Data required for type calculations
