@@ -10,6 +10,7 @@ The following external dependencies are required:
 - C++17 Compiler
 - GNU MP
 - GNU MPFR
+- LLVM 8
 
 ## Linux / MacOS
 
@@ -30,12 +31,18 @@ A type system incorporating features of refinement, dependent and uniqueness typ
 
 ## Lexer
 
-A hand written lexer.
+Simple lexer.
 
 ## Parser
 
-A hand written recursive-decent parser.
+Recursive-decent parser. Does partial type checking when parsing.
 
 ## Evaluator
 
-Slow-as-shit run-time expression Evaluator.
+Slow-as-shit AST walking expression Evaluator.
+
+Currently supports:
+
+- Function definitions
+- C++ Function binding (FFI)
+- Arbitrary-precision arithmetic

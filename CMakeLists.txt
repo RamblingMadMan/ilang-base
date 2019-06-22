@@ -50,7 +50,7 @@ add_library(ilang-base ${ILANG_BASE_HEADERS} ${ILANG_BASE_SOURCE})
 
 target_include_directories(ilang-base PUBLIC include)
 target_include_directories(ilang-base PRIVATE deps/GSL/include ${GMP_INCLUDES} ${MPFR_INCLUDES} ${LLVM_INCLUDE_DIRS})
-target_link_libraries(ilang-base utf8cpp fmt asmjit ${GMP_LIBRARIES} ${MPFR_LIBRARIES} ${llvm_libs})
+target_link_libraries(ilang-base utf8cpp fmt ${GMP_LIBRARIES} ${MPFR_LIBRARIES} ${llvm_libs})
 
 install(
 	FILES ${ILANG_BASE_HEADERS}
