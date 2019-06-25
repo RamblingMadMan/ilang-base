@@ -9,6 +9,7 @@
 #include "AReal.hpp"
 #include "Expr.hpp"
 
+#include "Result.hpp"
 #include "EvalDetail.hpp"
 
 //! \file
@@ -27,162 +28,22 @@ namespace ilang{
 			std::string m_msg;
 			ExprHandle m_expr;
 	};
-	
-	struct Result;
 
-	using ResultHandle = const Result*;
-	using ResultPtr = std::unique_ptr<const Result>;
-	
 	//! Data required for evaluating expressions
 	struct EvalData{
 		TypeData typeData;
 		
+		ResultScope root;
 		//using FunctionGen = std::function<ResultPtr(EvalData&, std::vector<ResultPtr>)>;
 		std::map<std::string, ResultPtr> registeredFunctions;
 		std::map<std::string, ResultPtr> boundNames;
-	};
-
-	//! Data type for the result of an evaluation
-	struct Result{
-		//! get the type of the result
-		virtual TypeHandle resolveType(TypeData &typeData) const noexcept = 0;
-		
-		//! get the result as a string
-		virtual std::string toString() const = 0;
-
-		/**
-		 * \defgroup ResultOperators Perform calculations using evaluation results
-		 * \{
-		 **/
-		virtual ResultPtr add(ResultHandle rhs) const;
-		virtual ResultPtr sub(ResultHandle rhs) const;
-		virtual ResultPtr mul(ResultHandle rhs) const;
-		virtual ResultPtr div(ResultHandle rhs) const;
-		/** \} */
-		
-		//! Call a callable object
-		virtual ResultPtr call(EvalData &data, std::vector<ResultPtr>) const;
-	};
-	
-	struct UnitResult: Result{
-		TypeHandle resolveType(TypeData &typeData) const noexcept override{
-			return findUnitType(typeData);
-		}
-		
-		std::string toString() const noexcept override{
-			return "()";
-		}
-	};
-	
-	struct TypeResult: Result{
-		TypeResult(TypeHandle value_): value(value_){}
-		
-		TypeHandle resolveType(TypeData &typeData) const noexcept override{
-			return findTypeType(typeData);
-		}
-		
-		std::string toString() const noexcept override{
-			return value->str;
-		}
-		
-		TypeHandle value;
-	};
-
-	struct NumberResult: Result{
-		using Value = std::variant<AInt, AReal, ARatio>;
-
-		template<typename T>
-		explicit NumberResult(T &&value_): value(std::forward<T>(value_)){}
-
-		explicit NumberResult(float f): NumberResult(AReal(f)){}
-		explicit NumberResult(double d): NumberResult(AReal(d)){}
-		explicit NumberResult(std::int64_t i): NumberResult(AInt(i)){}
-		
-		TypeHandle resolveType(TypeData &typeData) const noexcept override;
-		
-		std::string toString() const noexcept override{
-			return std::visit([](auto &&v){ return v.toString(); }, value);
-		}
-
-		ResultPtr add(ResultHandle rhs) const override;
-		ResultPtr sub(ResultHandle rhs) const override;
-		ResultPtr mul(ResultHandle rhs) const override;
-		ResultPtr div(ResultHandle rhs) const override;
-		
-		Value value;
-	};
-	
-	struct RefResult: Result{
-		explicit RefResult(ResultHandle other): value(other){}
-		
-		TypeHandle resolveType(TypeData &typeData) const noexcept override{
-			return value->resolveType(typeData);
-		}
-		
-		std::string toString() const override{ return value->toString(); }
-		
-		ResultPtr add(ResultHandle rhs) const override{ return value->add(rhs); }
-		ResultPtr sub(ResultHandle rhs) const override{ return value->sub(rhs); }
-		ResultPtr mul(ResultHandle rhs) const override{ return value->mul(rhs); }
-		ResultPtr div(ResultHandle rhs) const override{ return value->div(rhs); }
-		
-		ResultPtr call(EvalData &data, std::vector<ResultPtr> args) const override{ return value->call(data, std::move(args)); }
-		
-		ResultHandle value;
-	};
-	
-	struct StringResult: Result{
-		explicit StringResult(std::string value_): value(std::move(value_)){}
-		
-		TypeHandle resolveType(TypeData &typeData) const noexcept override;
-		
-		std::string toString() const noexcept override{ return value; }
-
-		ResultPtr add(ResultHandle rhs) const override;
-		
-		std::string value;
-	};
-	
-	struct CallableResult: Result{
-		using CallbackFn = std::function<ResultPtr(EvalData&, std::vector<ResultPtr>)>;
-		
-		explicit CallableResult(CallbackFn fn): value(fn){}
-		
-		TypeHandle resolveType(TypeData &typeData) const noexcept override;
-		
-		std::string toString() const noexcept override;
-		
-		ResultPtr call(EvalData &data, std::vector<ResultPtr> args) const override;
-		
-		CallbackFn value;
-		TypeHandle fnType;
-	};
-
-	struct ObjectResult: Result{
-		virtual std::size_t numMembers() const noexcept = 0;
-		virtual ResultHandle *members() const noexcept = 0;
-	};
-
-	struct ListResult: Result{
-		TypeHandle resolveType(TypeData &typeData) const noexcept override;
-		
-		std::string toString() const noexcept override;
-		
-		std::vector<ResultPtr> values;
-	};
-	
-	struct ProductResult: Result{
-		TypeHandle resolveType(TypeData & typeData) const noexcept override;
-		
-		std::string toString() const noexcept override;
-		
-		std::vector<ResultPtr> values;
+		std::map<const Exprs::FnDecl*, ResultPtr> fns;
 	};
 
 	//! Result of a call to eval
 	struct EvalResult{
 		ResultPtr result;
-		ExprIterator rest, end;
+		ExprIterator nextIt, endIt;
 	};
 
 	EvalResult eval(ExprIterator begin, ExprIterator end, EvalData &data);
@@ -192,7 +53,7 @@ namespace ilang{
 	}
 
 	inline auto eval(EvalResult remainder, EvalData &data){
-		return eval(remainder.rest, remainder.end, data);
+		return eval(remainder.nextIt, remainder.endIt, data);
 	}
 
 	namespace detail{

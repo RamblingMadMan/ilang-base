@@ -23,6 +23,7 @@ namespace ilang{
 	
 	//! An Expression
 	struct Expr{
+		virtual ~Expr() = default;
 		virtual std::string toString() const noexcept = 0;
 		virtual TypeExprHandle typeExpr() const noexcept = 0;
 	};
@@ -47,11 +48,55 @@ namespace ilang{
 		struct LValue: Expr{
 			virtual std::string_view id() const noexcept = 0;
 		};
+
+		struct TypeRef: TypeExpr{
+			explicit TypeRef(TypeExprHandle value_): value(value_){}
+
+			std::string toString() const noexcept override{ return value->toString(); }
+			TypeExprHandle typeExpr() const noexcept override{ return value->typeExpr(); }
+
+			TypeHandle resolve(TypeData &typeData, ResolveFn resolver) const override{
+				return value->resolve(typeData, std::move(resolver));
+			}
+
+			TypeExprHandle value;
+		};
 		
 		//! Reference expression
 		struct Ref: Expr{
-			virtual std::string_view id() const noexcept = 0;
 			virtual const LValue *lvalue() const noexcept = 0;
+		};
+
+		//! A dummy type for references to values
+		struct ValueRef: Ref{
+			explicit ValueRef(ExprHandle value_ = nullptr): value(value_){}
+
+			std::string toString() const noexcept override{ return value->toString(); }
+			TypeExprHandle typeExpr() const noexcept override{ return value->typeExpr(); }
+			const LValue *lvalue() const noexcept override{ return nullptr; }
+
+			ExprHandle value;
+		};
+
+		//! Unresolved reference expression
+		struct UnresolvedRef: Ref{
+			std::string toString() const noexcept override{ return name; }
+			TypeExprHandle typeExpr() const noexcept override{ return uniqueType->value; }
+			const LValue *lvalue() const noexcept override{ return nullptr; }
+
+			std::string name;
+			std::unique_ptr<TypeRef> uniqueType;
+		};
+
+		//! Resolved reference expression
+		struct ResolvedRef: Ref{
+			explicit ResolvedRef(const LValue *refed_ = nullptr): refed(refed_){}
+
+			std::string toString() const noexcept override{ return std::string(refed->id()); }
+			TypeExprHandle typeExpr() const noexcept override{ return refed->typeExpr(); }
+			const LValue *lvalue() const noexcept override{ return refed; }
+
+			const LValue *refed;
 		};
 		
 		//! Literal expression
@@ -73,19 +118,6 @@ namespace ilang{
 			
 			TypeHandle value;
 			const TypeLiteral *typeType;
-		};
-		
-		struct TypeRef: TypeExpr{
-			explicit TypeRef(TypeExprHandle value_): value(value_){}
-			
-			std::string toString() const noexcept override{ return value->toString(); }
-			TypeExprHandle typeExpr() const noexcept override{ return value->typeExpr(); }
-			
-			TypeHandle resolve(TypeData &typeData, ResolveFn resolver) const override{
-				return value->resolve(typeData, std::move(resolver));
-			}
-			
-			TypeExprHandle value;
 		};
 		
 		//! Unit literal expression
@@ -142,7 +174,7 @@ namespace ilang{
 			
 			TypeHandle resolve(TypeData &typeData, ResolveFn resolver) const override;
 			
-			std::vector<TypeExprHandle> elementTypes;
+			std::vector<TypeExprPtr> elementTypes;
 			const TypeLiteral *typeType;
 		};
 		
@@ -155,7 +187,7 @@ namespace ilang{
 			
 			TypeHandle resolve(TypeData &typeData, ResolveFn resolver) const override;
 			
-			std::vector<TypeExprHandle> innerTypes;
+			std::vector<TypeExprPtr> innerTypes;
 			const TypeLiteral *typeType;
 		};
 		
@@ -197,11 +229,11 @@ namespace ilang{
 		
 		struct ParamDecl: LValue{
 			std::string name;
-			TypeExprPtr type;
+			TypeExprPtr type = nullptr;
 			
 			std::string toString() const noexcept override{
 				auto ret = name;
-				if(type) ret += ": " + type->toString();
+				//if(type) ret += ": " + type->toString();
 				return ret;
 			}
 			
@@ -299,29 +331,6 @@ namespace ilang{
 			std::unique_ptr<FnType> fnType;
 		};
 		
-		//! Unresolved reference expression
-		struct UnresolvedRef: Ref{
-			std::string toString() const noexcept override{ return name; }
-			TypeExprHandle typeExpr() const noexcept override{ return uniqueType->value; }
-			std::string_view id() const noexcept override{ return name; }
-			const LValue *lvalue() const noexcept override{ return nullptr; }
-			
-			std::string name;
-			std::unique_ptr<TypeRef> uniqueType;
-		};
-		
-		//! Resolved reference expression
-		struct ResolvedRef: Ref{
-			explicit ResolvedRef(const LValue *refed_ = nullptr): refed(refed_){}
-			
-			std::string toString() const noexcept override{ return std::string(refed->id()); }
-			TypeExprHandle typeExpr() const noexcept override{ return refed->typeExpr(); }
-			std::string_view id() const noexcept override{ return refed->id(); }
-			const LValue *lvalue() const noexcept override{ return refed; }
-			
-			const LValue *refed;
-		};
-		
 		//! Function application expression
 		struct Application: Expr{
 			std::string toString() const noexcept override{
@@ -356,7 +365,7 @@ namespace ilang{
 			
 			TypeHandle resolve(TypeData &typeData, ResolveFn resolver) const override;
 			
-			TypeExprHandle lhsTypeExpr, rhsTypeExpr;
+			TypeExprPtr lhsTypeExpr, rhsTypeExpr;
 			std::string op;
 		};
 		

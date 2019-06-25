@@ -4,6 +4,16 @@
 #include <functional>
 
 namespace ilang{
+	template<typename ... Fns>
+	struct Overloaded: Fns...{
+		using Fns::operator()...;
+	};
+
+	template<typename ... Fns>
+	auto overload(Fns... fns){
+		return Overloaded<Fns...>{fns...};
+	}
+
 	template<typename T, typename Fn>
 	struct TypeSwitchCase{
 		Fn fn;

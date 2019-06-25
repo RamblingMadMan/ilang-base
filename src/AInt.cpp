@@ -86,5 +86,10 @@ std::string AInt::toString() const{
 	std::string str;
 	str.resize(mpz_sizeinbase(m_impl->value, 10) + 2);
 	mpz_get_str(&str[0], 10, m_impl->value);
+
+	while(str.back() == '\0'){
+		str.pop_back();
+	}
+
 	return str;
 }

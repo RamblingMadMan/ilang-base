@@ -63,11 +63,7 @@ struct Indent{
 	std::size_t numTabs, numSpaces;
 };
 
-ParsedExpr parseExpr(RefResolveFn refResolve, TypeData &typeData, Ast &ast, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim);
-
-auto storeExpr(Ast &ast, std::unique_ptr<Expr> ptr){
-	return ast.storage.emplace_back(std::move(ptr)).get();
-}
+ParsedExpr parseExpr(TypeData &typeData, Scope &scope, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim);
 
 TypeExprHandle deref(TypeExprHandle typeExpr){
 	if(auto typeRef = dynamic_cast<const Exprs::TypeRef*>(typeExpr))
@@ -87,32 +83,32 @@ ExprHandle deref(ExprHandle expr){
 		return expr;
 }
 
-auto refType(const TypeData &typeData, Ast &ast, TypeHandle type){
-	auto res = ast.types.find(type);
-	if(res != end(ast.types))
-		return std::make_unique<Exprs::TypeRef>(res->second.get());
-	
-	const Exprs::TypeLiteral *typePtr;
-	std::unique_ptr<Exprs::TypeLiteral> newType;
+auto refType(const TypeData &typeData, Scope &scope, TypeHandle type){
+	if(!type)
+		throw ParseError("internal error: (refType) nullptr given for type");
+
+	auto res = scope.resolveType(type);
+	if(res)
+		return std::make_unique<Exprs::TypeRef>(res);
+
+	auto newType = std::make_unique<Exprs::TypeLiteral>(nullptr);
+	auto typePtr = newType.get();
 	
 	if(isTypeType(type, typeData)){
-		auto typeType = ast.types.find(type);
-		if(typeType != end(ast.types))
-			typePtr = typeType->second.get();
-		else{
-			newType = std::make_unique<Exprs::TypeLiteral>(nullptr);
-			newType->typeType = newType.get();
-			typePtr = newType.get();
-		}
+		newType->typeType = newType.get();
 	}
 	else{
-		newType = std::make_unique<Exprs::TypeLiteral>(ast.types[findTypeType(typeData)].get());
-		typePtr = newType.get();
+		newType->typeType = scope.types[findTypeType(typeData)].get();
 	}
 	
 	newType->value = type;
-	ast.types[type] = std::move(newType);
+	scope.types[type] = std::move(newType);
 	return std::make_unique<Exprs::TypeRef>(typePtr);
+}
+
+const Exprs::TypeLiteral *typeTypeLit(const TypeData &typeData, Scope &scope){
+	auto typeRef = refType(typeData, scope, findTypeType(typeData));
+	return static_cast<const Exprs::TypeLiteral*>(deref(typeRef.get()));
 }
 
 int binopPrec(std::string op){
@@ -129,11 +125,12 @@ int binopPrec(std::string op){
 	else if(op == "==") return PREC_COUNTER;
 	else if(op == "|" || op == "&") return PREC_COUNTER;
 	else if(op == "=") return PREC_COUNTER;
+	else if(op == ":") return PREC_COUNTER;
 	else if(op == ",") return PREC_COUNTER;
 	else return std::numeric_limits<int>::max();
 }
 
-std::unique_ptr<Exprs::BinOp> sortBinop(TypeData &typeData, Ast &ast, std::unique_ptr<Exprs::BinOp> binop){
+std::unique_ptr<Exprs::BinOp> sortBinop(TypeData &typeData, std::unique_ptr<Exprs::BinOp> binop){
 	auto binopRhs = dynamic_cast<Exprs::BinOp*>(binop->rhs.get());
 	if(binopRhs){
 		auto lhsPrec = binopPrec(binop->op);
@@ -145,18 +142,18 @@ std::unique_ptr<Exprs::BinOp> sortBinop(TypeData &typeData, Ast &ast, std::uniqu
 			
 			binop->rhs = std::move(binopRhs->lhs);
 			
-			binop = sortBinop(typeData, ast, std::move(binop));
+			binop = sortBinop(typeData, std::move(binop));
 			
 			binop->resultType = std::make_unique<Exprs::BinOpType>();
-			binop->resultType->lhsTypeExpr = binop->lhs->typeExpr();
-			binop->resultType->rhsTypeExpr = binop->rhs->typeExpr();
+			binop->resultType->lhsTypeExpr = std::make_unique<Exprs::TypeRef>(deref(binop->lhs->typeExpr()));
+			binop->resultType->rhsTypeExpr = std::make_unique<Exprs::TypeRef>(deref(binop->rhs->typeExpr()));
 			binop->resultType->op = binop->op;
 						
 			binopRhs->lhs = std::move(binop);
 			
 			binopRhs->resultType = std::make_unique<Exprs::BinOpType>();
-			binopRhs->resultType->rhsTypeExpr = binopRhs->rhs->typeExpr();
-			binopRhs->resultType->lhsTypeExpr = binopRhs->lhs->typeExpr();
+			binopRhs->resultType->rhsTypeExpr = std::make_unique<Exprs::TypeRef>(deref(binopRhs->rhs->typeExpr()));
+			binopRhs->resultType->lhsTypeExpr = std::make_unique<Exprs::TypeRef>(deref(binopRhs->lhs->typeExpr()));
 			binopRhs->resultType->op = binopRhs->op;
 						
 			return oldRhs;
@@ -164,14 +161,14 @@ std::unique_ptr<Exprs::BinOp> sortBinop(TypeData &typeData, Ast &ast, std::uniqu
 	}
 	
 	binop->resultType = std::make_unique<Exprs::BinOpType>();
-	binop->resultType->lhsTypeExpr = binop->lhs->typeExpr();
-	binop->resultType->rhsTypeExpr = binop->rhs->typeExpr();
+	binop->resultType->lhsTypeExpr = std::make_unique<Exprs::TypeRef>(deref(binop->lhs->typeExpr()));
+	binop->resultType->rhsTypeExpr = std::make_unique<Exprs::TypeRef>(deref(binop->rhs->typeExpr()));
 	binop->resultType->op = binop->op;
 	
 	return binop;
 }
 
-ParsedExpr parseApplication(RefResolveFn refResolve, TypeData &typeData, Ast &ast, ExprPtr callable, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
+ParsedExpr parseApplication(TypeData &typeData, Scope &scope, ExprPtr callable, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	if(it == end || isDelim(*it))
 		throw ParseError("Unexpected end of function application");
 	
@@ -182,17 +179,19 @@ ParsedExpr parseApplication(RefResolveFn refResolve, TypeData &typeData, Ast &as
 	
 	std::vector<ExprPtr> args;
 	
-	auto argsParsed = parseExpr(refResolve, typeData, ast, indent, it, end, isDelim);
+	auto argsParsed = parseExpr(typeData, scope, indent, it, end, isDelim);
 	
 	it = argsParsed.it;
 	
 	if(auto argsApp = dynamic_cast<Exprs::Application*>(argsParsed.expr.get())){
 		args.reserve(1 + argsApp->args.size());
 		args.emplace_back(std::move(argsApp->functor));
-		args.insert(
-			std::end(args),
-			std::make_move_iterator(std::begin(argsApp->args)),
-			std::make_move_iterator(std::end(argsApp->args))
+		std::transform(
+			std::begin(argsApp->args), std::end(argsApp->args),
+			std::back_inserter(args),
+			[](auto &&arg){
+				return std::move(arg);
+			}
 		);
 	}
 	else{
@@ -212,13 +211,10 @@ ParsedExpr parseApplication(RefResolveFn refResolve, TypeData &typeData, Ast &as
 }
 
 ParsedExpr parseBinaryOp(
-	RefResolveFn refResolve, TypeData &typeData, Ast &ast, std::unique_ptr<Expr> lhs, std::string op,
+	TypeData &typeData, Scope &scope,
+	std::unique_ptr<Expr> lhs, std::string op,
 	Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim
 ){
-	auto storePtr = [&ast](auto &ptr){
-		return storeExpr(ast, std::move(ptr));
-	};
-	
 	auto newExpr = std::make_unique<Exprs::BinOp>();
 	newExpr->lhs = std::move(lhs);
 	if(!newExpr->lhs)
@@ -226,19 +222,20 @@ ParsedExpr parseBinaryOp(
 	
 	newExpr->op = std::move(op);
 	
-	auto[rhs, newIt] = parseExpr(refResolve, typeData, ast, indent, it, end, isDelim);
+	auto[rhs, newIt] = parseExpr(typeData, scope, indent, it, end, isDelim);
 	
 	newExpr->rhs = std::move(rhs);
 	if(!newExpr->rhs)
 		throw ParseError("internal error: nullptr for right side of binary op");
 	
-	auto res = sortBinop(typeData, ast, std::move(newExpr));
+	auto res = sortBinop(typeData, std::move(newExpr));
 	
 	return parse_result(res, newIt);
 }
 
 ParsedExpr parseLeadingValue(
-	RefResolveFn refResolve, TypeData &typeData, Ast &ast, std::unique_ptr<Expr> value,
+	TypeData &typeData, Scope &scope,
+	std::unique_ptr<Expr> value,
 	Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim
 ){
 	if(it == end || isDelim(*it))
@@ -253,7 +250,7 @@ ParsedExpr parseLeadingValue(
 	
 	switch(it->type){
 		case TokenType::op:{
-			return parseBinaryOp(std::move(refResolve), typeData, ast, std::move(value), it->value, indent, it+1, end, std::move(isDelim));
+			return parseBinaryOp(typeData, scope, std::move(value), it->value, indent, it+1, end, std::move(isDelim));
 		}
 			
 		// Application
@@ -263,7 +260,7 @@ ParsedExpr parseLeadingValue(
 		case TokenType::listL:
 		case TokenType::int_:
 		case TokenType::real:
-			return parseApplication(refResolve, typeData, ast, std::move(value), indent, it, end, isDelim);
+			return parseApplication(typeData, scope, std::move(value), indent, it, end, isDelim);
 			
 		default:
 			throw ParseError("Unexpected token " + as<std::string>(*it) + " after " + value->toString());
@@ -271,32 +268,33 @@ ParsedExpr parseLeadingValue(
 }
 
 ParsedExpr parseLiteralInner(
-	RefResolveFn refResolve, TypeData &typeData, Ast &ast, std::unique_ptr<Expr> lit,
+	TypeData &typeData, Scope &scope,
+	std::unique_ptr<Expr> lit,
 	Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim
 ){
 	if(it == end || isDelim(*it)) return parse_result(lit, it);
-	return parseLeadingValue(std::move(refResolve), typeData, ast, std::move(lit), indent, it, end, std::move(isDelim));
+	return parseLeadingValue(typeData, scope, std::move(lit), indent, it, end, std::move(isDelim));
 }
 
-ParsedExpr parseIntLiteral(RefResolveFn refResolve, TypeData &typeData, Ast &ast, std::string lit, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
+ParsedExpr parseIntLiteral(TypeData &typeData, Scope &scope, std::string lit, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	auto intLit = std::make_unique<Exprs::IntLiteral>(std::move(lit));
-	intLit->intType = refType(typeData, ast, findIntegerType(typeData));
-	return parseLiteralInner(std::move(refResolve), typeData, ast, std::move(intLit), indent, it, end, std::move(isDelim));
+	intLit->intType = refType(typeData, scope, findIntegerType(typeData));
+	return parseLiteralInner(typeData, scope, std::move(intLit), indent, it, end, std::move(isDelim));
 }
 
-ParsedExpr parseRealLiteral(RefResolveFn refResolve, TypeData &typeData, Ast &ast, std::string lit, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
+ParsedExpr parseRealLiteral(TypeData &typeData, Scope &scope, std::string lit, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	auto realLit = std::make_unique<Exprs::RealLiteral>(std::move(lit));
-	realLit->realType = refType(typeData, ast, findRealType(typeData));
-	return parseLiteralInner(std::move(refResolve), typeData, ast, std::move(realLit), indent, it, end, std::move(isDelim));
+	realLit->realType = refType(typeData, scope, findRealType(typeData));
+	return parseLiteralInner(typeData, scope, std::move(realLit), indent, it, end, std::move(isDelim));
 }
 
-ParsedExpr parseStrLiteral(RefResolveFn refResolve, TypeData &typeData, Ast &ast, std::string lit, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
+ParsedExpr parseStrLiteral(TypeData &typeData, Scope &scope, std::string lit, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	auto strLit = std::make_unique<Exprs::StringLiteral>(std::move(lit));
-	strLit->strType = refType(typeData, ast, findStringType(typeData));
-	return parseLiteralInner(std::move(refResolve), typeData, ast, std::move(strLit), indent, it, end, std::move(isDelim));
+	strLit->strType = refType(typeData, scope, findStringType(typeData));
+	return parseLiteralInner(typeData, scope, std::move(strLit), indent, it, end, std::move(isDelim));
 }
 
-ParsedExpr parseListLiteral(RefResolveFn refResolve, TypeData &typeData, Ast &ast, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
+ParsedExpr parseListLiteral(TypeData &typeData, Scope &scope, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	if(it == end || isDelim(*it)) throw ParseError("Unexpected end of list literal");
 	
 	while(it != end && it->type == TokenType::space)
@@ -304,7 +302,7 @@ ParsedExpr parseListLiteral(RefResolveFn refResolve, TypeData &typeData, Ast &as
 	
 	if(it == end || isDelim(*it)) throw ParseError("Unexpected end of list literal");
 	
-	auto inner = parseExpr(refResolve, typeData, ast, indent, it, end, [](const Token &tok){ return tok.type == TokenType::listR; });
+	auto inner = parseExpr(typeData, scope, indent, it, end, [](const Token &tok){ return tok.type == TokenType::listR; });
 	
 	std::unique_ptr<Expr> result;
 	
@@ -323,25 +321,25 @@ ParsedExpr parseListLiteral(RefResolveFn refResolve, TypeData &typeData, Ast &as
 		
 		innerExprs.emplace_back(std::move(inner.expr));
 		
-		std::vector<TypeExprHandle> innerTypeExprs;
-		innerTypeExprs.resize(innerExprs.size());
+		std::vector<TypeExprPtr> innerTypeExprs;
+		innerTypeExprs.reserve(innerExprs.size());
 		
 		std::transform(
 			begin(innerExprs), std::end(innerExprs),
-			begin(innerTypeExprs),
-			[](auto &&expr){ return expr->typeExpr(); }
+			std::back_inserter(innerTypeExprs),
+			[](auto &&expr){ return std::make_unique<Exprs::TypeRef>(deref(expr->typeExpr())); }
 		);
 		
 		auto list = std::make_unique<Exprs::ListLiteral>(std::move(innerExprs));
 		
-		list->listType = std::make_unique<Exprs::ListType>(ast.types[findTypeType(typeData)].get());
+		list->listType = std::make_unique<Exprs::ListType>(typeTypeLit(typeData, scope));
 		list->listType->elementTypes = std::move(innerTypeExprs);
 		
 		result = std::move(list);
 	}
 	else{
 		auto list = std::make_unique<Exprs::ListLiteral>();
-		list->listType = std::make_unique<Exprs::ListType>(ast.types[findTypeType(typeData)].get());
+		list->listType = std::make_unique<Exprs::ListType>(typeTypeLit(typeData, scope));
 		result = std::move(list);
 	}
 	
@@ -354,10 +352,10 @@ ParsedExpr parseListLiteral(RefResolveFn refResolve, TypeData &typeData, Ast &as
 	
 	if(it == end || isDelim(*it)) return parse_result(result, it);
 	
-	return parseLeadingValue(std::move(refResolve), typeData, ast, std::move(result), indent, it, end, std::move(isDelim));
+	return parseLeadingValue(typeData, scope, std::move(result), indent, it, end, std::move(isDelim));
 }
 
-ParsedExpr parseGroupLiteral(RefResolveFn refResolve, TypeData &typeData, Ast &ast, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
+ParsedExpr parseGroupLiteral(TypeData &typeData, Scope &scope, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	if(it == end || isDelim(*it)) throw ParseError("Unexpected end of group literal");
 	
 	while(it != end && it->type == TokenType::space)
@@ -365,7 +363,7 @@ ParsedExpr parseGroupLiteral(RefResolveFn refResolve, TypeData &typeData, Ast &a
 	
 	if(it == end || isDelim(*it)) throw ParseError("Unexpected end of group literal");
 	
-	auto inner = parseExpr(refResolve, typeData, ast, indent, it, end, [](const Token &tok){ return tok.type == TokenType::groupR; });
+	auto inner = parseExpr(typeData, scope, indent, it, end, [](const Token &tok){ return tok.type == TokenType::groupR; });
 	
 	std::unique_ptr<Expr> result;
 	
@@ -386,16 +384,16 @@ ParsedExpr parseGroupLiteral(RefResolveFn refResolve, TypeData &typeData, Ast &a
 		
 		auto product = std::make_unique<Exprs::ProductLiteral>();
 		
-		std::vector<TypeExprHandle> innerTypes;
-		innerTypes.resize(innerExprs.size());
+		std::vector<TypeExprPtr> innerTypes;
+		innerTypes.reserve(innerExprs.size());
 		
 		std::transform(
 			begin(innerExprs), std::end(innerExprs),
-			begin(innerTypes),
-			[](auto &&expr){ return expr->typeExpr(); }
+			std::back_inserter(innerTypes),
+			[](auto &&expr){ return std::make_unique<Exprs::TypeRef>(deref(expr->typeExpr())); }
 		);
-		
-		product->productType = std::make_unique<Exprs::ProductType>(ast.types[findTypeType(typeData)].get());
+
+		product->productType = std::make_unique<Exprs::ProductType>(typeTypeLit(typeData, scope));
 		product->productType->innerTypes = std::move(innerTypes);
 		
 		product->elements = std::move(innerExprs);
@@ -403,11 +401,14 @@ ParsedExpr parseGroupLiteral(RefResolveFn refResolve, TypeData &typeData, Ast &a
 	}
 	else{
 		auto unit = std::make_unique<Exprs::UnitLiteral>();
-		unit->unitType = refType(typeData, ast, findUnitType(typeData));
+		unit->unitType = refType(typeData, scope, findUnitType(typeData));
 		result = std::move(unit);
 	}
 	
-	it = inner.it+1;
+	if(inner.it != end && inner.it->type == TokenType::groupR)
+		++inner.it;
+
+	it = inner.it;
 	
 	if(it == end || isDelim(*it)) return parse_result(result, it);
 	
@@ -416,20 +417,19 @@ ParsedExpr parseGroupLiteral(RefResolveFn refResolve, TypeData &typeData, Ast &a
 	
 	if(it == end || isDelim(*it)) return parse_result(result, it);
 	
-	return parseLeadingValue(std::move(refResolve), typeData, ast, std::move(result), indent, it, end, std::move(isDelim));
+	return parseLeadingValue(typeData, scope, std::move(result), indent, it, end, std::move(isDelim));
 }
 
 std::vector<std::unique_ptr<Exprs::ParamDecl>> makeParams(TypeData &typeData, std::unique_ptr<Exprs::ProductLiteral> paramsGroup){
-	auto paramExprs = std::move(paramsGroup->elements);
-	
 	std::vector<std::unique_ptr<Exprs::ParamDecl>> ret;
-	ret.reserve(paramExprs.size());
+	ret.reserve(paramsGroup->elements.size());
 	
-	for(auto &&param : paramExprs){
+	for(auto &&param : paramsGroup->elements){
 		auto newParam = std::make_unique<Exprs::ParamDecl>();
 
 		if(auto unresolved = dynamic_cast<Exprs::UnresolvedRef*>(param.get())){
 			newParam->name = unresolved->name;
+			auto paramTyStr = unresolved->uniqueType->toString();
 			newParam->type = std::move(unresolved->uniqueType);
 		}
 		else if(auto resolved = dynamic_cast<Exprs::UnresolvedRef*>(param.get())){
@@ -465,7 +465,7 @@ std::vector<std::unique_ptr<Exprs::ParamDecl>> makeParams(TypeData &typeData, st
 }
 
 auto parseBlock(
-	RefResolveFn refResolve, TypeData &typeData, Ast &ast,
+	TypeData &typeData, Scope &scope,
 	Indent indent, TokenIterator it, TokenIterator end,
 	DelimPred isDelim
 ){
@@ -494,7 +494,7 @@ auto parseBlock(
 			} while(it != end && it->type == TokenType::newLine);
 		}
 		
-		auto[expr, newIt] = parseExpr(refResolve, typeData, ast, indent, it, end, isDelim);
+		auto[expr, newIt] = parseExpr(typeData, scope, indent, it, end, isDelim);
 		
 		auto ptr = body.emplace_back(std::move(expr)).get();
 		
@@ -535,7 +535,7 @@ auto parseBlock(
 }
 
 ParsedExpr parseFnDecl(
-	RefResolveFn refResolve, TypeData &typeData, Ast &ast,
+	TypeData &typeData, Scope &scope,
 	std::string id, std::unique_ptr<Exprs::ProductLiteral> paramsGroup,
 	Indent indent, TokenIterator it, TokenIterator end,
 	DelimPred isDelim
@@ -546,39 +546,38 @@ ParsedExpr parseFnDecl(
 	newFn->name = std::move(id);
 	
 	auto params = makeParams(typeData, std::move(paramsGroup));
-	
-	std::vector<const Exprs::ParamDecl*> paramsSorted;
-	paramsSorted.resize(params.size());
-	std::transform(
-		cbegin(params), cend(params),
-		begin(paramsSorted),
-		[](auto &&param){ return param.get(); }
-	);
-	
-	std::sort(
-		begin(paramsSorted), std::end(paramsSorted),
-		[](auto lhs, auto rhs){
-			return lhs->name < rhs->name;
-		}
-	);
-	
-	auto paramResolver = [&refResolve, &paramsSorted](TypeData &typeData, Ast &ast, const Exprs::UnresolvedRef *unresolved) -> ExprPtr{
-		auto it = std::lower_bound(begin(paramsSorted), std::end(paramsSorted), unresolved->name, [](auto lhs, auto name){
-			return lhs->name < name;
-		});
-		
-		if(it != std::end(paramsSorted))
-			return std::make_unique<Exprs::ResolvedRef>(*it);
-		
-		return refResolve(typeData, ast, unresolved);
-	};
+	std::vector<TypeExprPtr> paramTypes;
+
+	paramTypes.reserve(params.size());
+
+	auto &&fnScope = scope.children.emplace_back(std::make_unique<Scope>(&scope));
+
+	for(auto &&param : params){
+		auto paramTypeStr = param->typeExpr()->toString();
+		fnScope->boundNames[param->name] = std::make_unique<Exprs::ResolvedRef>(param.get());
+		paramTypes.emplace_back(std::make_unique<Exprs::TypeRef>(deref(param->typeExpr())));
+	}
 	
 	while(it != end && it->type == TokenType::space)
 		++it;
+
+	if(it->value != "=")
+		throw ParseError("Expected binding after function declaration");
 	
+	++it;
+
 	if(it->type == TokenType::newLine){
 		do{
 			++it;
+			if(it != end && it->type == TokenType::space){
+				auto nextIt = it+1;
+				if(nextIt == end)
+					break;
+				else if(nextIt->type == TokenType::newLine){
+					++it;
+					continue;
+				}
+			}
 		} while(it != end && it->type == TokenType::newLine);
 		
 		if(it->type != TokenType::space)
@@ -593,24 +592,45 @@ ParsedExpr parseFnDecl(
 		
 		++it;
 	}
-		
-	if(it->value != "=")
-		throw ParseError("Expected binding after function declaration");
-	
-	do{		
-		++it;
-	} while(it != end && it->type == TokenType::space);
-	
+	else{
+		do{
+			++it;
+		} while(it != end && it->type == TokenType::space);
+	}
+
 	ExprPtr fnBody;
 	
+	bool indentSet = false;
+
 	if(it->type == TokenType::newLine){
-		while(it->type == TokenType::newLine)
+		while(1){
+			do {
+				++it;
+			} while (it->type == TokenType::newLine);
+
+			if(it->type != TokenType::space)
+				throw ParseError("Expected indentation before function body");
+
+			Indent newIndent(it->value);
+
+			if(newIndent < indent || newIndent == indent)
+				throw ParseError("Function body's indentation must be greater than its declaration");
+
 			++it;
-	
-		std::tie(fnBody, it) = parseBlock(paramResolver, typeData, ast, exprIndent, it, end, isDelim);
+
+			if(it != end && it->type == TokenType::newLine)
+				continue;
+
+			if(!indentSet){
+				exprIndent = newIndent;
+				indentSet = true;
+			}
+
+			std::tie(fnBody, it) = parseBlock(typeData, *fnScope, exprIndent, it, end, isDelim);
+		}
 	}
 	else{
-		auto[body, newIt] = parseExpr(paramResolver, typeData, ast, exprIndent, it, end, isDelim);
+		auto[body, newIt] = parseExpr(typeData, *fnScope, indent, it, end, isDelim);
 		fnBody = std::move(body);
 		it = newIt;
 	}
@@ -620,81 +640,70 @@ ParsedExpr parseFnDecl(
 	newFn->fnType->resultType = std::make_unique<Exprs::TypeRef>(deref(fnBody->typeExpr()));
 	newFn->body = std::move(fnBody);
 	
-	std::vector<TypeExprPtr> paramTypes;
-	paramTypes.resize(params.size());
-	
-	std::transform(
-		cbegin(params), cend(params),
-		begin(paramTypes),
-		[](const auto &ptr){ return std::make_unique<Exprs::TypeRef>(ptr->typeExpr()); }
-	);
-	
 	newFn->fnType->paramTypes = std::move(paramTypes);
-	
 	newFn->params = std::move(params);
+
+	auto ret = std::make_unique<Exprs::ResolvedRef>(newFn.get());
 	
-	auto ret = std::make_unique<Exprs::ResolvedRef>();
-	ret->refed = newFn.get();
-	
-	ast.boundNames[newFn->name] = newFn.get();
-	ast.storage.emplace_back(std::move(newFn));
-	
+	scope.boundNames[newFn->name] = std::move(newFn);
+
 	if(it == end || isDelim(*it))
 		return {std::move(ret), it};
 		
-	return parseLeadingValue(std::move(refResolve), typeData, ast, std::move(ret), indent, it, end, std::move(isDelim));
+	return parseLeadingValue(typeData, scope, std::move(ret), indent, it, end, std::move(isDelim));
 }
 
-ParsedExpr parseId(RefResolveFn refResolve, TypeData &typeData, Ast &ast, std::string id, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
+ParsedExpr parseId(TypeData &typeData, Scope &scope, std::string id, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	std::unique_ptr<Expr> value;
-	
+
 	if(auto type = findTypeByString(typeData, id)){
-		auto typeLit = std::make_unique<Exprs::TypeLiteral>(ast.types[findTypeType(typeData)].get());
+		auto typeLit = std::make_unique<Exprs::TypeLiteral>(typeTypeLit(typeData, scope));
 		typeLit->value = type;
 		value = std::move(typeLit);
 	}
-	else if(auto lvalue = ast.findLValue(id)){
-		value = std::make_unique<Exprs::ResolvedRef>(lvalue);
+	else if(auto resolved = deref(scope.resolveName(id))){
+		if(auto lvalue = dynamic_cast<const Exprs::LValue*>(resolved)){
+			value = std::make_unique<Exprs::ResolvedRef>(lvalue);
+		}
+		else {
+			value = std::make_unique<Exprs::ValueRef>(resolved);
+		}
 	}
 	else{
 		auto unresolved = std::make_unique<Exprs::UnresolvedRef>();
 		
 		auto partialType = getPartialType(typeData);
-		
-		unresolved->uniqueType = refType(typeData, ast, partialType);
+
+		unresolved->uniqueType = refType(typeData, scope, partialType);
 		unresolved->name = id;
-		
-		auto resolved = refResolve(typeData, ast, unresolved.get());
-		if(resolved)
-			value = std::move(resolved);
-		else
-			value = std::move(unresolved);
+
+		value = std::move(unresolved);
 	}
 	
+	auto valueStr = value->toString();
+
 	if(it == end || isDelim(*it))
 		return parse_result(value, it);
 	
 	if(it->type == TokenType::groupL){
 		// function declaration
 		auto paramsParsed = parseGroupLiteral(
-			refResolve, typeData, ast,
+			typeData, scope,
 			indent, it+1, end,
-			[](const Token &t){
-				if(t.type == TokenType::space)
+			[&](const Token &t){
+				if(t.type == TokenType::op && t.value == "=")
 					return true;
-				else if(t.type == TokenType::op && t.value == "=")
-					return true;
-				
-				return false;
+				else
+					return isDelim(t);
 			}
 		);
 
 		auto groupPtr = static_cast<Exprs::ProductLiteral*>(paramsParsed.expr.release());
-		
-		it = paramsParsed.it+1;
+
+		it = paramsParsed.it;
 		
 		return parseFnDecl(
-			refResolve, typeData, ast,
+			typeData, scope,
 			std::move(id), std::unique_ptr<Exprs::ProductLiteral>(groupPtr),
 			indent, it, end,
 			std::move(isDelim)
@@ -707,10 +716,10 @@ ParsedExpr parseId(RefResolveFn refResolve, TypeData &typeData, Ast &ast, std::s
 	if(it == end || isDelim(*it))
 		return parse_result(value, it);
 	
-	return parseLeadingValue(std::move(refResolve), typeData, ast, std::move(value), indent, it, end, std::move(isDelim));
+	return parseLeadingValue(typeData, scope, std::move(value), indent, it, end, std::move(isDelim));
 }
 
-ParsedExpr parseExpr(RefResolveFn refResolve, TypeData &typeData, Ast &ast, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
+ParsedExpr parseExpr(TypeData &typeData, Scope &scope, Indent indent, TokenIterator it, TokenIterator end, DelimPred isDelim){
 	// Rummage through newlines and spaces to try and find an expression
 	
 	if(it == end || isDelim(*it)) return {nullptr, it};
@@ -729,54 +738,49 @@ ParsedExpr parseExpr(RefResolveFn refResolve, TypeData &typeData, Ast &ast, Inde
 		
 		if(it == end || isDelim(*it))
 			return {nullptr, it};
-		else if(it->type != TokenType::space)
-			return {nullptr, it};
-		
-		Indent newIndent(it->value);
-		++it;
-		
-		if(it == end || isDelim(*it))
-			return {nullptr, it};
-		else if(newIndent != indent)
-			throw ParseError("Wrong indentation before expression");
+
+		if(indent.numTabs || indent.numSpaces){
+			if(it->type != TokenType::space)
+				throw ParseError("Expected indentation after new line");
+
+			Indent newIndent(it->value);
+			++it;
+
+			if(it == end || isDelim(*it))
+				return {nullptr, it};
+			else if(it->type == TokenType::newLine)
+				return parseExpr(typeData, scope, indent, it, end, std::move(isDelim));
+			else if(newIndent != indent)
+				throw ParseError("Wrong indentation before expression");
+		}
 	}
+
+	auto nextIt = it == end ? it : it+1;
 
 	switch(it->type){
 		case TokenType::eof: return {nullptr, it};
-		case TokenType::id: return parseId(std::move(refResolve), typeData, ast, it->value, indent, it+1, end, std::move(isDelim));
-		case TokenType::int_: return parseIntLiteral(std::move(refResolve), typeData, ast, it->value, indent, it+1, end, std::move(isDelim));
-		case TokenType::real: return parseRealLiteral(std::move(refResolve), typeData, ast, it->value, indent, it+1, end, std::move(isDelim));
-		case TokenType::str: return parseStrLiteral(std::move(refResolve), typeData, ast, it->value, indent, it+1, end, std::move(isDelim));
-		case TokenType::groupL: return parseGroupLiteral(std::move(refResolve), typeData, ast, indent, it+1, end, std::move(isDelim));
-		case TokenType::listL: return parseListLiteral(std::move(refResolve), typeData, ast, indent, it+1, end, std::move(isDelim));
+		case TokenType::id: return parseId(typeData, scope, as<std::string>(*it), indent, nextIt, end, std::move(isDelim));
+		case TokenType::int_: return parseIntLiteral(typeData, scope, as<std::string>(*it), indent, nextIt, end, std::move(isDelim));
+		case TokenType::real: return parseRealLiteral(typeData, scope, as<std::string>(*it), indent, nextIt, end, std::move(isDelim));
+		case TokenType::str: return parseStrLiteral(typeData, scope, it->value, indent, nextIt, end, std::move(isDelim));
+		case TokenType::groupL: return parseGroupLiteral(typeData, scope, indent, nextIt, end, std::move(isDelim));
+		case TokenType::listL: return parseListLiteral(typeData, scope, indent, nextIt, end, std::move(isDelim));
 		default: throw ParseError("Unexpected token");
 	}
 }
 
-ParseResult ilang::parse(TokenIterator it, TokenIterator endIt, TypeData &typeData, Ast &ast, RefResolveFn refResolve){
-	ParseResult res;
-
+ExprPtr ilang::parse(TokenIterator &it, TokenIterator endIt, TypeData &typeData, Ast &ast){
 	auto isNewLine = [](const Token &tok) -> bool{
 		return tok.type == TokenType::newLine;
 	};
 
-	auto parsed = parseExpr(std::move(refResolve), typeData, ast, Indent(), it, endIt, isNewLine);
-
-	auto handle = parsed.expr.get();
-	ast.storage.emplace_back(std::move(parsed.expr)).get();
-	ast.root.emplace_back(handle);
-
-	res.expr = handle;
+	auto parsed = parseExpr(typeData, ast.rootScope, Indent(), it, endIt, isNewLine);
 
 	// must increment iterator because ::parse____ functions do not eat delimiter tokens
 	if(parsed.it != endIt)
 		++parsed.it;
 
-	res.remainder = parsed.it;
-	res.end = endIt;
-	
-	res.typeData = &typeData;
-	res.ast = &ast;
+	it = parsed.it;
 
-	return res;
+	return std::move(parsed.expr);
 }

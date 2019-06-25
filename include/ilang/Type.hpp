@@ -82,38 +82,15 @@ namespace ilang{
 	 **/
 	struct TypeData{
 		TypeData();
+		~TypeData();
 		
 		TypeData(TypeData&&) = default;
 		TypeData(const TypeData&) = delete;
 		
 		TypeData &operator=(TypeData&&) noexcept = default;
 
-		TypeHandle infinityType;
-		TypeHandle partialType;
-		TypeHandle typeType;
-		TypeHandle unitType;
-		TypeHandle stringType;
-		TypeHandle numberType, complexType, imaginaryType, realType, rationalType, integerType, naturalType, booleanType;
-		TypeHandle functionType;
-		std::map<std::uint32_t, TypeHandle> sizedBooleanTypes;
-		std::map<std::uint32_t, TypeHandle> sizedNaturalTypes;
-		std::map<std::uint32_t, TypeHandle> sizedIntegerTypes;
-		std::map<std::uint32_t, TypeHandle> sizedRationalTypes;
-		std::map<std::uint32_t, TypeHandle> sizedImaginaryTypes;
-		std::map<std::uint32_t, TypeHandle> sizedRealTypes;
-		std::map<std::uint32_t, TypeHandle> sizedComplexTypes;
-		std::map<StringEncoding, TypeHandle> encodedStringTypes;
-		std::map<std::vector<TypeHandle>, std::map<TypeHandle, TypeHandle>> functionTypes;
-		std::map<std::vector<TypeHandle>, TypeHandle> sumTypes;
-		std::map<std::vector<TypeHandle>, TypeHandle> productTypes;
-		std::map<TypeHandle, TypeHandle> treeTypes;
-		std::map<TypeHandle, std::map<TypeHandle, TypeHandle>> mapTypes;
-		std::map<TypeHandle, TypeHandle> listTypes, arrayTypes, dynamicArrayTypes;
-		std::map<TypeHandle, std::map<std::size_t, TypeHandle>> staticArrayTypes;
-		std::vector<TypeHandle> partialTypes;
-		std::vector<std::unique_ptr<Type>> storage;
-		
-		std::map<std::string, TypeHandle> typeAliases;
+		struct Impl;
+		std::unique_ptr<Impl> impl;
 	};
 
 	/**

@@ -4,7 +4,38 @@
 
 using namespace ilang;
 
-TypeHandle createEncodedStringType(TypeData &data, StringEncoding encoding) noexcept{
+struct TypeData::Impl{
+	Impl();
+
+	TypeHandle infinityType;
+	TypeHandle partialType;
+	TypeHandle typeType;
+	TypeHandle unitType;
+	TypeHandle stringType;
+	TypeHandle numberType, complexType, imaginaryType, realType, rationalType, integerType, naturalType, booleanType;
+	TypeHandle functionType;
+	std::map<std::uint32_t, TypeHandle> sizedBooleanTypes;
+	std::map<std::uint32_t, TypeHandle> sizedNaturalTypes;
+	std::map<std::uint32_t, TypeHandle> sizedIntegerTypes;
+	std::map<std::uint32_t, TypeHandle> sizedRationalTypes;
+	std::map<std::uint32_t, TypeHandle> sizedImaginaryTypes;
+	std::map<std::uint32_t, TypeHandle> sizedRealTypes;
+	std::map<std::uint32_t, TypeHandle> sizedComplexTypes;
+	std::map<StringEncoding, TypeHandle> encodedStringTypes;
+	std::map<std::vector<TypeHandle>, std::map<TypeHandle, TypeHandle>> functionTypes;
+	std::map<std::vector<TypeHandle>, TypeHandle> sumTypes;
+	std::map<std::vector<TypeHandle>, TypeHandle> productTypes;
+	std::map<TypeHandle, TypeHandle> treeTypes;
+	std::map<TypeHandle, std::map<TypeHandle, TypeHandle>> mapTypes;
+	std::map<TypeHandle, TypeHandle> listTypes, arrayTypes, dynamicArrayTypes;
+	std::map<TypeHandle, std::map<std::size_t, TypeHandle>> staticArrayTypes;
+	std::vector<TypeHandle> partialTypes;
+	std::vector<std::unique_ptr<Type>> storage;
+
+	std::map<std::string, TypeHandle> typeAliases;
+};
+
+TypeHandle createEncodedStringType(TypeData::Impl &data, StringEncoding encoding) noexcept{
 	auto type = std::make_unique<Type>();
 	type->base = data.stringType;
 
@@ -18,7 +49,7 @@ TypeHandle createEncodedStringType(TypeData &data, StringEncoding encoding) noex
 }
 
 TypeHandle createSizedNumberType(
-	TypeData &data, TypeHandle base,
+	TypeData::Impl &data, TypeHandle base,
 	const std::string &name, const std::string &mangledName,
 	std::uint32_t numBits
 ) noexcept
@@ -37,7 +68,7 @@ TypeHandle createSizedNumberType(
 }
 
 TypeHandle createFunctionType(
-	TypeData &data,
+	TypeData::Impl &data,
 	const std::vector<TypeHandle> &params, TypeHandle ret
 ) noexcept
 {
@@ -62,7 +93,7 @@ TypeHandle createFunctionType(
 }
 
 template<typename Container, typename Key>
-TypeHandle findInnerType(const TypeData &data, TypeHandle base, const Container &cont, std::optional<Key> key) noexcept{
+TypeHandle findInnerType(TypeHandle base, const Container &cont, std::optional<Key> key) noexcept{
 	if(key){
 		auto res = cont.find(*key);
 		if(res != end(cont))
@@ -75,23 +106,23 @@ TypeHandle findInnerType(const TypeData &data, TypeHandle base, const Container 
 }
 
 template<typename Container>
-TypeHandle findInnerNumberType(const TypeData &data, TypeHandle base, const Container &cont, std::uint32_t numBits) noexcept{
-	return findInnerType(data, base, cont, numBits ? std::make_optional(numBits) : std::nullopt);
+TypeHandle findInnerNumberType(TypeHandle base, const Container &cont, std::uint32_t numBits) noexcept{
+	return findInnerType(base, cont, numBits ? std::make_optional(numBits) : std::nullopt);
 }
 
 template<typename Container, typename Key, typename Create>
 TypeHandle getInnerType(
-	TypeData &data, TypeHandle base,
+	TypeData::Impl &data, TypeHandle base,
 	Container &&container, std::optional<Key> key,
 	Create &&create
 ){
-	auto res = findInnerType(data, base, container, key);
+	auto res = findInnerType(base, container, key);
 	return res ? res : create(data, *key);
 }
 
 template<typename Container, typename Create>
 TypeHandle getInnerNumberType(
-	TypeData &data, TypeHandle base,
+	TypeData::Impl &data, TypeHandle base,
 	Container &&container, std::uint32_t numBits,
 	Create &&create
 ){
@@ -158,7 +189,7 @@ bool ilang::isArrayType(TypeHandle type, const TypeData& data) noexcept{
 
 #define REFINED_TYPE_CHECK(type, typeLower)\
 bool ilang::is##type##Type(TypeHandle type, const TypeData &data) noexcept{\
-	auto baseType = data.typeLower##Type;\
+	auto baseType = data.impl->typeLower##Type;\
 	return type == baseType || hasBaseType(type, baseType);\
 }
 
@@ -177,19 +208,19 @@ REFINED_TYPE_CHECK(Boolean, boolean)
 REFINED_TYPE_CHECK(String, string)
 
 #define NUMBER_VALUE_TYPE(T, t, mangledSig)\
-TypeHandle create##T##Type(TypeData &data, std::uint32_t numBits){\
+TypeHandle create##T##Type(TypeData::Impl &data, std::uint32_t numBits){\
 	return createSizedNumberType(data, data.t##Type, #T, mangledSig, numBits);\
 }\
 TypeHandle ilang::find##T##Type(const TypeData &data, std::uint32_t numBits) noexcept{\
-	return findInnerNumberType(data, data.t##Type, data.sized##T##Types, numBits);\
+	return findInnerNumberType(data.impl->t##Type, data.impl->sized##T##Types, numBits);\
 }\
 TypeHandle ilang::get##T##Type(TypeData &data, std::uint32_t numBits){\
-	return getInnerNumberType(data, data.t##Type, data.sized##T##Types, numBits, create##T##Type);\
+	return getInnerNumberType(*data.impl, data.impl->t##Type, data.impl->sized##T##Types, numBits, create##T##Type);\
 }
 
 #define ROOT_TYPE(T, t)\
-TypeHandle ilang::find##T##Type(const TypeData &data) noexcept{ return data.t##Type; }\
-TypeHandle ilang::get##T##Type(TypeData &data){ return data.t##Type; }
+TypeHandle ilang::find##T##Type(const TypeData &data) noexcept{ return data.impl->t##Type; }\
+TypeHandle ilang::get##T##Type(TypeData &data){ return data.impl->t##Type; }
 
 ROOT_TYPE(Infinity, infinity)
 ROOT_TYPE(Type, type)
@@ -205,7 +236,7 @@ NUMBER_VALUE_TYPE(Imaginary, imaginary, "i")
 NUMBER_VALUE_TYPE(Complex, complex, "c")
 
 template<typename Comp>
-auto getSortedTypes(const TypeData &data, Comp &&comp = std::less<void>{}){
+auto getSortedTypes(const TypeData::Impl &data, Comp &&comp = std::less<void>{}){
 	std::vector<TypeHandle> types;
 	types.reserve(data.storage.size());
 	
@@ -222,11 +253,11 @@ auto getSortedTypes(const TypeData &data, Comp &&comp = std::less<void>{}){
 TypeHandle ilang::findTypeByString(const TypeData &data, std::string_view str){
 	auto strS = std::string(str);
 	
-	auto aliased = data.typeAliases.find(strS);
-	if(aliased != end(data.typeAliases))
+	auto aliased = data.impl->typeAliases.find(strS);
+	if(aliased != end(data.impl->typeAliases))
 		return aliased->second;
 	
-	auto types = getSortedTypes(data, [](auto lhs, auto rhs){ return lhs->str < rhs->str; });
+	auto types = getSortedTypes(*data.impl, [](auto lhs, auto rhs){ return lhs->str < rhs->str; });
 	auto res = std::lower_bound(begin(types), end(types), str, [](TypeHandle lhs, std::string_view rhs){ return lhs->str < std::string(rhs); });
 	
 	if((res != end(types)) && (str < (*res)->str))
@@ -239,7 +270,7 @@ TypeHandle ilang::findTypeByString(const TypeData &data, std::string_view str){
 }
 
 TypeHandle ilang::findTypeByMangled(const TypeData &data, std::string_view mangled){
-	auto types = getSortedTypes(data, [](auto lhs, auto rhs){ return lhs->mangled < rhs->mangled; });
+	auto types = getSortedTypes(*data.impl, [](auto lhs, auto rhs){ return lhs->mangled < rhs->mangled; });
 	auto res = std::lower_bound(begin(types), end(types), mangled, [](TypeHandle lhs, std::string_view rhs){ return lhs->mangled < std::string(rhs); });
 	
 	if((res != end(types)) && (mangled < (*res)->mangled))
@@ -259,46 +290,46 @@ TypeHandle ilang::findCommonType(TypeHandle type0, TypeHandle type1) noexcept{
 
 TypeHandle ilang::findPartialType(const TypeData &data, std::optional<std::uint32_t> id) noexcept{
 	if(!id)
-		return data.partialType;
+		return data.impl->partialType;
 
 	auto num = *id;
 
-	if(data.partialTypes.size() >= num)
+	if(data.impl->partialTypes.size() >= num)
 		return nullptr;
 	else
-		return data.partialTypes[num];
+		return data.impl->partialTypes[num];
 }
 
 TypeHandle ilang::findStringType(const TypeData &data, std::optional<StringEncoding> encoding) noexcept{
-	return findInnerType(data, data.stringType, data.encodedStringTypes, encoding);
+	return findInnerType(data.impl->stringType, data.impl->encodedStringTypes, encoding);
 }
 
 TypeHandle ilang::findTreeType(const TypeData &data, TypeHandle t) noexcept{
-	return findInnerType(data, nullptr, data.treeTypes, std::make_optional(t));
+	return findInnerType(nullptr, data.impl->treeTypes, std::make_optional(t));
 }
 
 TypeHandle ilang::findListType(const TypeData &data, TypeHandle t) noexcept{
-	return findInnerType(data, nullptr, data.listTypes, std::make_optional(t));
+	return findInnerType(nullptr, data.impl->listTypes, std::make_optional(t));
 }
 
 TypeHandle ilang::findArrayType(const TypeData &data, TypeHandle t) noexcept{
-	return findInnerType(data, nullptr, data.arrayTypes, std::make_optional(t));
+	return findInnerType(nullptr, data.impl->arrayTypes, std::make_optional(t));
 }
 
 TypeHandle ilang::findDynamicArrayType(const TypeData &data, TypeHandle t) noexcept{
-	return findInnerType(data, nullptr, data.listTypes, std::make_optional(t));
+	return findInnerType(nullptr, data.impl->listTypes, std::make_optional(t));
 }
 
 TypeHandle ilang::findStaticArrayType(const TypeData &data, TypeHandle t, std::size_t n) noexcept{
-	auto res = data.staticArrayTypes.find(t);
-	if(res != end(data.staticArrayTypes))
-		return findInnerType(data, nullptr, res->second, std::make_optional(n));
+	auto res = data.impl->staticArrayTypes.find(t);
+	if(res != end(data.impl->staticArrayTypes))
+		return findInnerType(nullptr, res->second, std::make_optional(n));
 	
 	return nullptr;
 }
 
 TypeHandle findSumTypeInner(const TypeData &data, const std::vector<TypeHandle> &uniqueSortedInnerTypes) noexcept{
-	return findInnerType(data, nullptr, data.sumTypes, std::make_optional(std::ref(uniqueSortedInnerTypes)));	
+	return findInnerType(nullptr, data.impl->sumTypes, std::make_optional(std::ref(uniqueSortedInnerTypes)));
 }
 
 TypeHandle ilang::findSumType(const TypeData &data, std::vector<TypeHandle> innerTypes) noexcept{
@@ -308,12 +339,12 @@ TypeHandle ilang::findSumType(const TypeData &data, std::vector<TypeHandle> inne
 }
 
 TypeHandle ilang::findProductType(const TypeData &data, const std::vector<TypeHandle> &innerTypes) noexcept{
-	return findInnerType(data, nullptr, data.productTypes, std::make_optional(std::ref(innerTypes)));
+	return findInnerType(nullptr, data.impl->productTypes, std::make_optional(std::ref(innerTypes)));
 }
 
 TypeHandle ilang::findFunctionType(const TypeData &data, const std::vector<TypeHandle> &params, TypeHandle result) noexcept{
-	auto paramsRes = data.functionTypes.find(params);
-	if(paramsRes != end(data.functionTypes)){
+	auto paramsRes = data.impl->functionTypes.find(params);
+	if(paramsRes != end(data.impl->functionTypes)){
 		auto resultRes = paramsRes->second.find(result);
 		if(resultRes != end(paramsRes->second))
 			return resultRes->second;
@@ -322,24 +353,24 @@ TypeHandle ilang::findFunctionType(const TypeData &data, const std::vector<TypeH
 	return nullptr;
 }
 
-TypeHandle ilang::findFunctionType(const TypeData &data) noexcept{ return data.functionType; }
+TypeHandle ilang::findFunctionType(const TypeData &data) noexcept{ return data.impl->functionType; }
 
 TypeHandle ilang::getStringType(TypeData &data, std::optional<StringEncoding> encoding){
-	return getInnerType(data, data.stringType, data.encodedStringTypes, encoding, createEncodedStringType);
+	return getInnerType(*data.impl, data.impl->stringType, data.impl->encodedStringTypes, encoding, createEncodedStringType);
 }
 
 TypeHandle ilang::getTreeType(TypeData &data, TypeHandle t){
 	if(auto res = findTreeType(data, t))
 		return res;
 	
-	auto ptr = data.storage.emplace_back(std::make_unique<Type>()).get();
+	auto ptr = data.impl->storage.emplace_back(std::make_unique<Type>()).get();
 	
-	ptr->base = data.infinityType;
+	ptr->base = data.impl->infinityType;
 	ptr->str = "(Tree " + t->str + ")";
 	ptr->mangled = "ot0" + t->mangled;
 	ptr->types = {t};
 	
-	data.treeTypes[t] = ptr;
+	data.impl->treeTypes[t] = ptr;
 	
 	return ptr;
 }
@@ -355,9 +386,9 @@ TypeHandle ilang::getListType(TypeData &data, TypeHandle t){
 	newType->mangled = "ol0" + t->mangled;
 	newType->types = {t};
 	
-	auto ptr = data.storage.emplace_back(std::move(newType)).get();
+	auto ptr = data.impl->storage.emplace_back(std::move(newType)).get();
 	
-	data.listTypes[t] = ptr;
+	data.impl->listTypes[t] = ptr;
 	
 	return ptr;
 }
@@ -373,9 +404,9 @@ TypeHandle ilang::getArrayType(TypeData &data, TypeHandle t){
 	newType->mangled = "oa0" + t->mangled;
 	newType->types = {t};
 	
-	auto ptr = data.storage.emplace_back(std::move(newType)).get();
+	auto ptr = data.impl->storage.emplace_back(std::move(newType)).get();
 	
-	data.arrayTypes[t] = ptr;
+	data.impl->arrayTypes[t] = ptr;
 	
 	return ptr;
 }
@@ -391,9 +422,9 @@ TypeHandle ilang::getDynamicArrayType(TypeData &data, TypeHandle t){
 	newType->mangled = "a0" + t->mangled;
 	newType->types = {t};
 	
-	auto ptr = data.storage.emplace_back(std::move(newType)).get();
+	auto ptr = data.impl->storage.emplace_back(std::move(newType)).get();
 	
-	data.dynamicArrayTypes[t] = ptr;
+	data.impl->dynamicArrayTypes[t] = ptr;
 	
 	return ptr;
 }
@@ -412,20 +443,20 @@ TypeHandle ilang::getStaticArrayType(TypeData &data, TypeHandle t, std::size_t n
 	newType->types = {t};
 	newType->bits = n;
 	
-	auto ptr = data.storage.emplace_back(std::move(newType)).get();
+	auto ptr = data.impl->storage.emplace_back(std::move(newType)).get();
 	
-	data.staticArrayTypes[t][n] = ptr;
+	data.impl->staticArrayTypes[t][n] = ptr;
 	
 	return ptr;
 }
 
 TypeHandle ilang::getPartialType(TypeData &data){
 	auto type = std::make_unique<Type>();
-	auto id = std::to_string(data.partialTypes.size());
-	type->base = data.partialType;
+	auto id = std::to_string(data.impl->partialTypes.size());
+	type->base = data.impl->partialType;
 	type->str = "Partial" + id;
 	type->mangled = "_" + id;
-	auto &&typePtr = data.storage.emplace_back(std::move(type));
+	auto &&typePtr = data.impl->storage.emplace_back(std::move(type));
 	return typePtr.get();
 }
 
@@ -436,7 +467,7 @@ TypeHandle ilang::getSumType(TypeData &data, std::vector<TypeHandle> innerTypes)
 	if(auto res = findSumTypeInner(data, innerTypes))
 		return res;
 	
-	auto &&newType = data.storage.emplace_back(std::make_unique<Type>());
+	auto &&newType = data.impl->storage.emplace_back(std::make_unique<Type>());
 	
 	newType->base = findInfinityType(data);
 	newType->types = std::move(innerTypes);
@@ -454,7 +485,7 @@ TypeHandle ilang::getSumType(TypeData &data, std::vector<TypeHandle> innerTypes)
 
 	newType->bits = innerTypes.size();
 	
-	auto[it, good] = data.sumTypes.try_emplace(newType->types, newType.get());
+	auto[it, good] = data.impl->sumTypes.try_emplace(newType->types, newType.get());
 	
 	if(!good){
 		// TODO: throw TypeError
@@ -472,7 +503,7 @@ TypeHandle ilang::getProductType(TypeData &data, std::vector<TypeHandle> innerTy
 	if(auto res = findProductType(data, innerTypes))
 		return res;
 	
-	auto &&newType = data.storage.emplace_back(std::make_unique<Type>());
+	auto &&newType = data.impl->storage.emplace_back(std::make_unique<Type>());
 	
 	newType->base = findInfinityType(data);
 	
@@ -488,7 +519,7 @@ TypeHandle ilang::getProductType(TypeData &data, std::vector<TypeHandle> innerTy
 	
 	newType->types = std::move(innerTypes);
 		
-	auto[it, good] = data.productTypes.try_emplace(newType->types, newType.get());
+	auto[it, good] = data.impl->productTypes.try_emplace(newType->types, newType.get());
 	
 	if(!good){
 		// TODO: throw TypeError
@@ -498,16 +529,20 @@ TypeHandle ilang::getProductType(TypeData &data, std::vector<TypeHandle> innerTy
 }
 
 TypeHandle ilang::getFunctionType(TypeData &data, std::vector<TypeHandle> params, TypeHandle result){
-	auto &&retMap = data.functionTypes[params];
+	auto &&retMap = data.impl->functionTypes[params];
 
 	auto res = retMap.find(result);
 	if(res != end(retMap))
 		return res->second;
 
-	return retMap[result] = createFunctionType(data, params, result);
+	return retMap[result] = createFunctionType(*data.impl, params, result);
 }
 
-TypeData::TypeData(){
+TypeData::TypeData(): impl(std::make_unique<Impl>()){}
+
+TypeData::~TypeData(){}
+
+TypeData::Impl::Impl(){
 	auto newInfinityType = [this](){
 		auto &&ptr = storage.emplace_back(std::make_unique<Type>());
 		ptr->base = ptr.get();

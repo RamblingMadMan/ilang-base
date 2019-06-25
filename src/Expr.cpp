@@ -12,7 +12,7 @@ TypeHandle Exprs::FnType::resolve(TypeData &typeData, TypeExpr::ResolveFn resolv
 		[&](const TypeExprPtr &ptr){ return ptr->resolve(typeData, resolver); }
 	);
 	
-	auto resultTypeHandle = resultType->resolve(typeData, resolver);
+	auto resultTypeHandle = resultType->resolve(typeData, std::move(resolver));
 	
 	return getFunctionType(typeData, std::move(paramTypeHandles), resultTypeHandle);
 }
@@ -38,7 +38,7 @@ TypeHandle Exprs::ListType::resolve(TypeData &typeData, typename TypeExpr::Resol
 	std::transform(
 		begin(elementTypes), end(elementTypes),
 		begin(types),
-		[&](TypeExprHandle typeExpr){ return typeExpr->resolve(typeData, resolver); }
+		[&](const TypeExprPtr &typeExpr){ return typeExpr->resolve(typeData, resolver); }
 	);
 	
 	if(!types.empty()){
@@ -78,7 +78,7 @@ TypeHandle Exprs::ProductType::resolve(TypeData &typeData, typename TypeExpr::Re
 	std::transform(
 		begin(innerTypes), end(innerTypes),
 		begin(types),
-		[&](TypeExprHandle typeExpr){ return typeExpr->resolve(typeData, resolver); }
+		[&](const TypeExprPtr &typeExpr){ return typeExpr->resolve(typeData, resolver); }
 	);
 	
 	if(types.size() == 1)
@@ -136,6 +136,8 @@ TypeHandle Exprs::ApplicationType::resolve(TypeData &typeData, TypeExpr::Resolve
 
 
 TypeHandle Exprs::BinOpType::resolve(TypeData &typeData, typename TypeExpr::ResolveFn resolver) const{
+
+
 	auto lhsType = lhsTypeExpr->resolve(typeData, resolver);
 	auto rhsType = rhsTypeExpr->resolve(typeData, resolver);
 	

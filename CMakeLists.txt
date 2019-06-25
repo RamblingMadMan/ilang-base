@@ -25,7 +25,9 @@ set(
 	include/ilang/Type.hpp
 	include/ilang/Expr.hpp
 	include/ilang/Parser.hpp
+	include/ilang/Result.hpp
 	include/ilang/Eval.hpp
+	include/ilang/Util.hpp
 )
 
 set(
@@ -38,6 +40,7 @@ set(
 	src/Expr.cpp
 	src/Type.cpp
 	src/Parser.cpp
+	src/Result.cpp
 	src/Eval.cpp
 	src/Compiler.cpp
 
