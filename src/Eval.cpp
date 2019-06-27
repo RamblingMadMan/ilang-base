@@ -103,9 +103,7 @@ ResultPtr evalTypeExpr(TypeExprHandle expr, TypeData &typeData, ResultScope&){
 }
 
 ResultPtr evalFnDecl(const Exprs::FnDecl *decl, TypeData &typeData, ResultScope &scope){
-	auto fnType = decl->typeExpr()->resolve(typeData, [](auto&, auto p){ return p; });
-	
-	auto fn = [&scope, decl, fnType](TypeData &typeData, std::vector<ResultPtr> args){
+	auto fn = [&scope, decl](TypeData &typeData, std::vector<ResultPtr> args){
 		if(args.size() != decl->params.size())
 			throw EvalError("Must pass exact amount of arguments to callable result (auto-currying coming soon)");
 		
@@ -120,28 +118,29 @@ ResultPtr evalFnDecl(const Exprs::FnDecl *decl, TypeData &typeData, ResultScope 
 		ResultScope fnScope(&scope);
 
 		std::map<TypeHandle, TypeHandle> mappedPartials;
-		
-		for(std::size_t i = 0; i < decl->params.size(); i++){
-			if(isPartialType(fnType->types[i], typeData))
-				mappedPartials[fnType->types[i]] = argTypes[i];
-		}
-		
+
 		auto typeResolver = [&mappedPartials](auto&, TypeHandle partial){
 			auto res = mappedPartials.find(partial);
 			if(res != cend(mappedPartials))
 				return res->second;
-			
+
 			return partial;
 		};
 		
-		auto calledFnType = decl->typeExpr()->resolve(typeData, typeResolver);
+		for(std::size_t i = 0; i < decl->params.size(); i++){
+			auto paramType = decl->typeExpr()->paramTypes[i]->resolve(typeData, typeResolver);
+			if(isPartialType(paramType, typeData))
+				mappedPartials[paramType] = argTypes[i];
+		}
+		
+		auto fnType = decl->typeExpr()->resolve(typeData, typeResolver);
 		
 		std::map<ExprHandle, ResultPtr> paramMap;
 		
 		for(std::size_t i = 0; i < decl->params.size(); i++){
-			if(!hasBaseType(argTypes[i], calledFnType->types[i]))
+			if(!hasBaseType(argTypes[i], fnType->types[i]))
 				throw EvalError(
-					"Could not convert argument " + std::to_string(i) + " from " + argTypes[i]->str + " to " + calledFnType->types[i]->str
+					"Could not convert argument " + std::to_string(i) + " from " + argTypes[i]->str + " to " + fnType->types[i]->str
 				);
 			
 			fnScope.boundNames[decl->params[i]->name] = std::move(args[i]);
@@ -152,7 +151,7 @@ ResultPtr evalFnDecl(const Exprs::FnDecl *decl, TypeData &typeData, ResultScope 
 	};
 	
 	auto ret = std::make_unique<CallableResult>(std::move(fn));
-	ret->fnType = fnType;
+	ret->fnType = decl->typeExpr()->resolve(typeData, [](auto&, auto p){ return p; });
 
 	auto ptr = ret.get();
 

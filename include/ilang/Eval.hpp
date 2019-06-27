@@ -32,12 +32,7 @@ namespace ilang{
 	//! Data required for evaluating expressions
 	struct EvalData{
 		TypeData typeData;
-		
 		ResultScope root;
-		//using FunctionGen = std::function<ResultPtr(EvalData&, std::vector<ResultPtr>)>;
-		std::map<std::string, ResultPtr> registeredFunctions;
-		std::map<std::string, ResultPtr> boundNames;
-		std::map<const Exprs::FnDecl*, ResultPtr> fns;
 	};
 
 	//! Result of a call to eval
@@ -147,11 +142,11 @@ namespace ilang{
 				setParamsImpl(tup, args, std::make_index_sequence<numParams>{});
 			}
 			
-			static auto wrap(TypeData &data, std::function<Ret(Params...)> fn) -> std::function<ResultPtr(EvalData&, std::vector<ResultPtr>)>{
+			static auto wrap(TypeData &data, std::function<Ret(Params...)> fn) -> std::function<ResultPtr(TypeData&, std::vector<ResultPtr>)>{
 				auto retType = CppTypeGetter<Ret>::get(data);
 				auto paramTypes = std::vector{CppTypeGetter<Params>::get()...};
 				
-				auto wrapped = [fn{std::move(fn)}, retType, paramTypes{std::move(paramTypes)}](EvalData &data, std::vector<ResultPtr> args){
+				auto wrapped = [fn{std::move(fn)}, retType, paramTypes{std::move(paramTypes)}](TypeData &data, std::vector<ResultPtr> args){
 					std::tuple<Params...> paramValues;
 					
 					if(args.size() != numParams)
@@ -168,10 +163,10 @@ namespace ilang{
 		
 		template<>
 		struct FnWrapper<void()>{
-			static auto wrap(TypeData &data, std::function<void()> fn) -> std::function<ResultPtr(EvalData&, std::vector<ResultPtr>)>{
+			static auto wrap(TypeData &data, std::function<void()> fn) -> std::function<ResultPtr(TypeData&, std::vector<ResultPtr>)>{
 				auto retType = findUnitType(data);
 				
-				auto wrapped = [fn{std::move(fn)}, retType](EvalData &data, std::vector<ResultPtr> args){
+				auto wrapped = [fn{std::move(fn)}, retType](TypeData &data, std::vector<ResultPtr> args){
 					if(args.size() != 1)
 						throw EvalError("wrong number of arguments");
 					else if(!dynamic_cast<const UnitResult*>(args[0].get()))
@@ -192,16 +187,18 @@ namespace ilang{
 		auto fnType = detail::CppTypeGetter<FnType>::get(data.typeData);
 		auto wrappedFn = detail::FnWrapper<FnType>::wrap(data.typeData, std::move(fn));
 		
-		data.registeredFunctions[name] = std::make_unique<CallableResult>(std::move(wrappedFn));
+		auto res = std::make_unique<CallableResult>(std::move(wrappedFn));
+		auto ptr = res.get();
+		data.root.registeredFunctions[name] = std::move(res);
 		
-		return std::make_unique<RefResult>(data.registeredFunctions[name].get());
+		return std::make_unique<RefResult>(ptr);
 	}
 	
 	template<typename T>
 	inline ResultPtr bindEvalName(const std::string &name, T value, EvalData &data){
 		auto wrapped = detail::ValueWrapper<T>::wrap(value);
 		auto ptr = wrapped.get();
-		data.boundNames[name] = std::move(wrapped);
+		data.root.boundNames[name] = std::move(wrapped);
 		return std::make_unique<RefResult>(ptr);
 	}
 }

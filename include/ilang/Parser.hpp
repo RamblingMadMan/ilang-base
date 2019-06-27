@@ -2,6 +2,8 @@
 #define ILANG_PARSER_HPP 1
 
 #include <iostream>
+#include <vector>
+#include <list>
 
 #include "ilang/Lexer.hpp"
 
@@ -15,7 +17,7 @@ namespace ilang{
 		public:
 			ParseError(std::string msg): m_msg(std::move(msg)){}
 
-			const char *what() const noexcept override{ return m_msg.c_str(); }
+			const char *what() const noexcept override;
 
 		private:
 			std::string m_msg;
@@ -76,16 +78,11 @@ namespace ilang{
 	//! Parse all tokens in a stream
 	inline auto parseAll(TokenIterator it, TokenIterator end, TypeData &typeData, Ast &ast){
 		std::vector<ExprPtr> ret;
+		//auto itStr = as<std::string>(*it);
 
-		auto expr = parse(it, end, typeData, ast);
-		while(expr){
+		while(it != end){
+			auto expr = parse(it, end, typeData, ast);
 			ret.emplace_back(std::move(expr));
-			expr = parse(it, end, typeData, ast);
-		}
-
-		for(auto &&e : ret){
-			auto exprStr = e->toString();
-			std::cout << exprStr << '\n';
 		}
 		
 		return ret;

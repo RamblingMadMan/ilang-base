@@ -136,8 +136,6 @@ TypeHandle Exprs::ApplicationType::resolve(TypeData &typeData, TypeExpr::Resolve
 
 
 TypeHandle Exprs::BinOpType::resolve(TypeData &typeData, typename TypeExpr::ResolveFn resolver) const{
-
-
 	auto lhsType = lhsTypeExpr->resolve(typeData, resolver);
 	auto rhsType = rhsTypeExpr->resolve(typeData, resolver);
 	
@@ -145,6 +143,6 @@ TypeHandle Exprs::BinOpType::resolve(TypeData &typeData, typename TypeExpr::Reso
 		if(isIntegerType(lhsType, typeData) && isIntegerType(rhsType, typeData))
 			return findRationalType(typeData);
 	}
-	
+
 	return findCommonType(lhsType, rhsType);
 }
