@@ -580,9 +580,9 @@ ExprPtr parseFnDecl(
 		++it;
 	}
 	else{
-		do{
+		while(it != end && it->type == TokenType::space){
 			++it;
-		} while(it != end && it->type == TokenType::space);
+		}
 	}
 
 	ExprPtr fnBody;
